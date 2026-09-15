@@ -1,0 +1,4 @@
+deploy-pulse.db
+deploy-pulse.db-*
+.env
+/node_modules
