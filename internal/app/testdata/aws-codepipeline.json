@@ -1,0 +1,1 @@
+{"detail":{"pipeline":"payments-pipeline","execution-id":"aws-6001","state":"SUCCEEDED","branch":"main","version":"a1b2c3d4","environment":"production","actor":"release-bot","start-time":"2026-09-15T08:20:00Z","stop-time":"2026-09-15T08:25:00Z","url":"https://console.aws.amazon.com/codesuite"},"checks":[{"name":"Production deploy","status":"success"}]}

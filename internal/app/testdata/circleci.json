@@ -1,0 +1,1 @@
+{"pipeline":{"id":"circle-3001","status":"running","repository":"billing/service","environment":"staging","created_at":"2026-09-15T08:20:00Z","web_url":"https://app.circleci.com/pipelines/3001","vcs":{"branch":"feature/invoices","revision":"ca61b4d9"},"trigger":{"actor":{"login":"mika"}}},"checks":[{"name":"Deploy preview","status":"running"}]}

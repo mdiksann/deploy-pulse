@@ -1,0 +1,1 @@
+{"object_kind":"pipeline","project":{"path_with_namespace":"ledger/worker"},"user":{"username":"naya"},"object_attributes":{"id":2001,"status":"success","ref":"main","sha":"5b89dd4e","environment":"staging","created_at":"2026-09-15T08:20:00Z","updated_at":"2026-09-15T08:24:00Z","web_url":"https://gitlab.example/pipelines/2001"},"checks":[{"name":"Test suite","status":"success"}]}

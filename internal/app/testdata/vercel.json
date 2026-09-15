@@ -1,0 +1,1 @@
+{"deployment":{"id":"vercel-4001","state":"READY","target":"production","createdAt":"2026-09-15T08:20:00Z","readyAt":"2026-09-15T08:22:00Z","url":"https://northstar.example","meta":{"githubCommitRepo":"northstar/web","githubCommitRef":"main","githubCommitSha":"d9f314bf","githubCommitAuthorName":"mika"},"checks":[{"name":"Publish","status":"success"}]}}
