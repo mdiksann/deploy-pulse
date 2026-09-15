@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0d0f12">
+    <title>Deploy Pulse</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to deployments</a>
+    <svg class="icon-defs" aria-hidden="true">
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+      <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M14.5 4.5c2.6-.8 4.7-.5 5-.5 0 .3.3 2.4-.5 5L12 16l-4-4 6.5-7.5Z"/><path d="m8 12-3.4.5L3 16l5 .8M12 16l-.5 3.4L8 21l-.8-5"/><circle cx="15.5" cy="8.5" r="1.25"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 10a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 7V3M15 7V3M7 9h10v2a5 5 0 0 1-10 0V9ZM12 16v5"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-3v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H5v-3h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1L8.4 5l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3.7h3v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2v3h-.2a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13M14 7l5 5-5 5"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.2 4.2L19 6.5"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 21 20H3L12 4Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
+    </svg>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" href="#overview" aria-label="Deploy Pulse overview"><span class="brand-mark"><i></i><i></i><i></i></span><span>deploy<span>pulse</span></span></a>
+        <button class="workspace-switcher" type="button" aria-label="Switch workspace">Platform engineering <svg><use href="#i-chevron"/></svg></button>
+        <nav class="nav-list">
+          <a class="nav-link active" href="#overview"><svg><use href="#i-grid"/></svg>Overview</a>
+          <a class="nav-link" href="#deployments"><svg><use href="#i-rocket"/></svg>Deployments</a>
+          <a class="nav-link" href="#alerts"><svg><use href="#i-bell"/></svg>Alerts <span class="nav-count" id="alert-count">0</span></a>
+          <a class="nav-link" href="#connections"><svg><use href="#i-plug"/></svg>Connections</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <a class="nav-link" href="#settings"><svg><use href="#i-settings"/></svg>Settings</a>
+          <p><span class="status-dot success"></span>All systems reporting</p>
+        </div>
+      </aside>
+
+      <section class="page-shell">
+        <header class="topbar">
+          <div class="crumb"><span class="live-dot"></span><span>Live workspace</span><span class="slash">/</span><strong>Release watch</strong></div>
+          <div class="top-actions">
+            <span id="sync-status" class="sync-status">Syncing</span>
+            <button id="focus-search" class="icon-button" type="button" aria-label="Search deployments"><svg aria-hidden="true"><use href="#i-search"/></svg></button>
+            <button id="user-menu" class="avatar" type="button" aria-label="Open user menu">AN</button>
+          </div>
+        </header>
+
+        <main id="main">
+          <section class="intro" id="overview" aria-labelledby="overview-title">
+            <div>
+              <p class="section-note">Release watch</p>
+              <h1 id="overview-title">Two deployments need attention.</h1>
+              <p class="intro-copy">Failures are isolated. Production remains stable while the affected releases wait for review.</p>
+            </div>
+            <div class="scope-controls" aria-label="Dashboard filters">
+              <label>Environment<select id="environment-filter"><option value="">All environments</option><option value="production">Production</option><option value="staging">Staging</option></select></label>
+              <label>Range<select id="range-filter"><option value="24">Last 24 hours</option><option value="168">Last 7 days</option></select></label>
+            </div>
+          </section>
+
+          <section class="focus-grid" aria-label="Current release health">
+            <article class="failure-rail">
+              <div class="panel-heading"><div><p class="section-note">Needs attention</p><h2>Failure rail</h2></div><span class="failure-number" id="failure-number">00</span></div>
+              <div id="failure-list" class="rail-list" aria-live="polite"><div class="skeleton rail-skeleton"></div><div class="skeleton rail-skeleton"></div></div>
+              <div class="rail-footer"><svg aria-hidden="true"><use href="#i-alert"/></svg><span>Failed releases do not progress until their checks recover.</span><a href="#deployments">Review all deployments <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+            </article>
+            <article class="pulse-panel">
+              <div class="panel-heading"><div><p class="section-note">Last 7 days</p><h2>Deployment pulse</h2></div><span class="chart-legend"><i></i>Successful releases</span></div>
+              <div class="chart" role="img" aria-label="Seven day deployment trend. Most releases were successful with two failures today.">
+                <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
+                <svg viewBox="0 0 600 180" preserveAspectRatio="none" aria-hidden="true"><path class="chart-area" d="M0 135 L80 122 L160 132 L240 90 L320 106 L400 72 L480 88 L600 40 L600 180 L0 180Z"/><path class="chart-line" d="M0 135 L80 122 L160 132 L240 90 L320 106 L400 72 L480 88 L600 40"/><circle cx="600" cy="40" r="5"/></svg>
+                <div class="failure-marker" style="left: 77%"><b>2</b><span>failures</span></div>
+              </div>
+              <div class="chart-axis"><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span><span>Today</span></div>
+            </article>
+          </section>
+
+          <dl class="health-strip" aria-label="Release health summary">
+            <div><dt>Successful releases</dt><dd id="success-count">—</dd><small>in selected range</small></div>
+            <div><dt>Failed releases</dt><dd id="failed-count">—</dd><small>need a review</small></div>
+            <div><dt>Median duration</dt><dd id="duration-value">2m 18s</dd><small>completed deployments</small></div>
+            <div><dt>Production state</dt><dd class="production-state"><span class="status-dot success"></span>Stable</dd><small>no active rollback</small></div>
+          </dl>
+
+          <section class="deployment-section" id="deployments" aria-labelledby="deployments-title">
+            <div class="section-header"><div><p class="section-note">Deployment history</p><h2 id="deployments-title">Recent releases</h2></div><p class="result-count" id="result-count" aria-live="polite">Loading deployments</p></div>
+            <div class="table-tools">
+              <label class="search-field"><svg aria-hidden="true"><use href="#i-search"/></svg><span class="visually-hidden">Filter deployments</span><input id="search-filter" type="search" placeholder="Filter by repository or branch" aria-label="Filter deployments by repository or branch"></label>
+              <label>Status<select id="status-filter"><option value="">Every status</option><option value="failed">Failed</option><option value="running">Running</option><option value="success">Successful</option><option value="cancelled">Cancelled</option></select></label>
+              <button id="reset-filters" class="text-button" type="button">Reset filters</button>
+            </div>
+            <div class="table-frame"><table><thead><tr><th scope="col">Deployment</th><th scope="col">Environment</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Started</th><th scope="col">Provider</th><th scope="col"><span class="visually-hidden">Open deployment</span></th></tr></thead><tbody id="deployment-table"><tr><td colspan="7"><div class="loading-row"><i></i>Loading deployment history</div></td></tr></tbody></table></div>
+          </section>
+
+          <section class="secondary-grid">
+            <article id="alerts" class="quiet-panel"><div class="panel-heading"><div><p class="section-note">Notifications</p><h2>Alerting stays quiet until it matters.</h2></div><a href="#settings">Manage rules</a></div><div class="rule-row"><div class="rule-icon"><svg aria-hidden="true"><use href="#i-bell"/></svg></div><div><strong>Production failure</strong><span>Send one Slack alert to <code>#release-watch</code>; send one recovery when the next release succeeds.</span></div><span class="rule-active"><i></i>Active</span></div></article>
+            <article id="connections" class="quiet-panel"><div class="panel-heading"><div><p class="section-note">Ingestion</p><h2>Provider signals</h2></div><a href="#settings">Connections</a></div><ul class="provider-list"><li><span class="provider-badge github">GH</span><span>GitHub Actions</span><small><i class="status-dot success"></i>Receiving</small></li><li><span class="provider-badge vercel">V</span><span>Vercel</span><small><i class="status-dot success"></i>Receiving</small></li><li><span class="provider-badge gitlab">GL</span><span>GitLab CI</span><small><i class="status-dot muted"></i>Not connected</small></li><li><span class="provider-badge aws">AWS</span><span>AWS CodePipeline</span><small><i class="status-dot muted"></i>Not connected</small></li></ul></article>
+          </section>
+
+          <section id="settings" class="admin-section" aria-labelledby="admin-title">
+            <div class="section-header"><div><p class="section-note">Workspace administration</p><h2 id="admin-title">Connections, notifications, and recovery</h2></div><p class="result-count">Admin controls</p></div>
+            <div class="admin-grid">
+              <article class="admin-panel"><h3>Notification rule</h3><p>Create a failure alert. A subsequent success sends one recovery message.</p><form id="rule-form"><label>Repository<input name="repository" value="*" required></label><label>Environment<select name="environment"><option value="*">Every environment</option><option value="production">Production</option><option value="staging">Staging</option></select></label><label>Channel<select name="channel"><option value="slack">Slack</option><option value="email">Email</option></select></label><label>Destination<input name="target" placeholder="#release-watch" required></label><button class="primary-button" type="submit">Save rule</button></form><div id="rules-list" class="compact-list" aria-live="polite"></div></article>
+              <article class="admin-panel"><h3>Provider connection</h3><p>Secrets are encrypted before they are persisted. This local MVP never returns them.</p><form id="connection-form"><label>Provider<select name="provider"><option value="github">GitHub Actions</option><option value="gitlab">GitLab CI</option><option value="circleci">CircleCI</option><option value="vercel">Vercel</option><option value="netlify">Netlify</option><option value="aws-codepipeline">AWS CodePipeline</option></select></label><label>Connection name<input name="name" placeholder="Production webhooks" required></label><label>Webhook secret<input name="secret" type="password" autocomplete="new-password" required></label><button class="primary-button" type="submit">Save connection</button></form><div id="connections-list" class="compact-list" aria-live="polite"></div></article>
+              <article class="admin-panel dead-letter-panel"><h3>Dead-letter events</h3><p>Parsing failures wait here without blocking other providers.</p><div id="dead-letter-list" class="dead-letter-list" aria-live="polite"><span class="admin-empty">Loading event recovery queue</span></div></article>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <dialog id="deployment-dialog" class="deployment-dialog" aria-labelledby="dialog-title"></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
