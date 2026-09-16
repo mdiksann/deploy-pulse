@@ -29,11 +29,8 @@ function visibleDeployments() {
 function render() {
   const items = visibleDeployments();
   const failures = items.filter((deployment) => deployment.status === "failed");
-  const successes = items.filter((deployment) => deployment.status === "success");
   $("#failure-number").textContent = String(failures.length).padStart(2, "0");
   $("#alert-count").textContent = failures.length;
-  $("#success-count").textContent = successes.length;
-  $("#failed-count").textContent = failures.length;
   $("#result-count").textContent = `${items.length} deployment${items.length === 1 ? "" : "s"} in selected range`;
   renderFailureRail(failures);
   renderTable(items);
@@ -98,51 +95,33 @@ async function loadDeployments() {
   }
 }
 
-const adminHeaders = { "Content-Type": "application/json", "X-Role": "admin" };
+function providerBadge(provider) {
+  return ({ github: "GH", gitlab: "GL", circleci: "CI", vercel: "V", netlify: "N", "aws-codepipeline": "AWS" })[provider] || provider.slice(0, 3).toUpperCase();
+}
 
-async function loadAdmin() {
+function renderProviderHealth(providers, connected) {
+  const target = $("#provider-health-list");
+  const active = new Set(connected);
+  target.innerHTML = providers.map((provider) => `<li><span class="provider-badge ${escapeHTML(provider)}">${escapeHTML(providerBadge(provider))}</span><span>${escapeHTML(providerName(provider))}</span><small><i class="status-dot ${active.has(provider) ? "success" : "muted"}"></i>${active.has(provider) ? "Configured" : "Not configured"}</small></li>`).join("");
+}
+
+async function loadHealth() {
   try {
-    const [rulesResponse, connectionsResponse, deadLettersResponse] = await Promise.all([
-      fetch("/api/notification-rules", { headers: { "X-Role": "admin" } }),
-      fetch("/api/provider-connections", { headers: { "X-Role": "admin" } }),
-      fetch("/api/dead-letter-events", { headers: { "X-Role": "admin" } })
-    ]);
-    if (![rulesResponse, connectionsResponse, deadLettersResponse].every((response) => response.ok)) throw new Error("Admin data is unavailable.");
-    const [rules, connections, deadLetters] = await Promise.all([rulesResponse.json(), connectionsResponse.json(), deadLettersResponse.json()]);
-    renderRules(rules.items || []);
-    renderConnections(connections.items || []);
-    renderDeadLetters(deadLetters.items || []);
+    const response = await fetch("/api/health");
+    const data = await response.json();
+    $("#api-health").textContent = data.api || "unavailable";
+    $("#database-health").textContent = data.database || "unavailable";
+    $("#queue-health").textContent = data.queue || "unavailable";
+    $("#dlq-count").textContent = String(data.dead_letter_events ?? "—");
+    $("#system-status").textContent = data.status === "ok" ? "All systems reporting" : "System attention needed";
+    $("#system-status-dot").className = `status-dot ${data.status === "ok" ? "success" : "muted"}`;
+    renderProviderHealth(data.providers || [], data.connected_providers || []);
+    if (!response.ok) throw new Error("One or more runtime dependencies are unavailable.");
   } catch (error) {
-    $("#rules-list").innerHTML = `<span class="admin-empty">${escapeHTML(error.message)}</span>`;
-    $("#connections-list").innerHTML = "";
-    $("#dead-letter-list").innerHTML = `<span class="admin-empty">${escapeHTML(error.message)}</span>`;
+    $("#system-status").textContent = "Runtime health unavailable";
+    $("#system-status-dot").className = "status-dot muted";
+    $("#runtime-note").textContent = error.message;
   }
-}
-
-function renderRules(rules) {
-  $("#rules-list").innerHTML = rules.length ? rules.map((rule) => `<div class="compact-item"><span><strong>${escapeHTML(rule.repository)}</strong> · ${escapeHTML(rule.environment)} · ${escapeHTML(rule.channel)}</span><span>${escapeHTML(rule.target)}</span></div>`).join("") : `<span class="admin-empty">No notification rules yet.</span>`;
-}
-
-function renderConnections(connections) {
-  $("#connections-list").innerHTML = connections.length ? connections.map((connection) => `<div class="compact-item"><span><strong>${escapeHTML(providerName(connection.provider))}</strong></span><span>${escapeHTML(connection.name)}</span></div>`).join("") : `<span class="admin-empty">No provider connections saved.</span>`;
-}
-
-function renderDeadLetters(items) {
-  $("#dead-letter-list").innerHTML = items.length ? items.map((item) => `<div class="dead-letter-item"><span class="dead-letter-provider">${escapeHTML(providerName(item.provider))}</span><span class="dead-letter-error">${escapeHTML(item.error)} · retry ${escapeHTML(item.retry_count)}</span><button class="reprocess-button" type="button" data-reprocess="${escapeHTML(item.id)}">Reprocess</button></div>`).join("") : `<span class="admin-empty">No events need recovery.</span>`;
-}
-
-async function submitAdmin(path, payload, successMessage) {
-  const response = await fetch(path, { method: "POST", headers: adminHeaders, body: JSON.stringify(payload) });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "The change could not be saved.");
-  showToast(successMessage);
-  loadAdmin();
-}
-
-async function reprocessDeadLetter(id) {
-  try {
-    await submitAdmin(`/api/dead-letter-events/${encodeURIComponent(id)}/reprocess`, {}, "Event queued for reprocessing.");
-  } catch (error) { showToast(error.message); }
 }
 
 async function openDeployment(id) {
@@ -177,13 +156,11 @@ $("#range-filter").addEventListener("change", (event) => { state.filters.hours =
 $("#status-filter").addEventListener("change", (event) => { state.filters.status = event.target.value; loadDeployments(); });
 $("#search-filter").addEventListener("input", (event) => { state.filters.search = event.target.value; render(); });
 $("#focus-search").addEventListener("click", () => { $("#search-filter").scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" }); $("#search-filter").focus({ preventScroll: true }); });
-$("#user-menu").addEventListener("click", () => showToast("Signed in as Ari N. in Platform engineering."));
+$("#user-menu").addEventListener("click", () => showToast("This dashboard does not hold administrative credentials."));
 $("#reset-filters").addEventListener("click", () => { state.filters = { environment: "", status: "", search: "", hours: 24 }; $("#environment-filter").value = ""; $("#range-filter").value = "24"; $("#status-filter").value = ""; $("#search-filter").value = ""; loadDeployments(); });
-$("#rule-form").addEventListener("submit", async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await submitAdmin("/api/notification-rules", { repository: data.get("repository"), environment: data.get("environment"), status: "failed", channel: data.get("channel"), target: data.get("target") }, "Notification rule saved."); event.currentTarget.reset(); } catch (error) { showToast(error.message); } });
-$("#connection-form").addEventListener("submit", async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await submitAdmin("/api/provider-connections", { provider: data.get("provider"), name: data.get("name"), secret: data.get("secret") }, "Provider connection saved."); event.currentTarget.reset(); } catch (error) { showToast(error.message); } });
-document.addEventListener("click", (event) => { const trigger = event.target.closest("[data-deployment]"); if (trigger) openDeployment(trigger.dataset.deployment); const reprocess = event.target.closest("[data-reprocess]"); if (reprocess) reprocessDeadLetter(reprocess.dataset.reprocess); if (event.target.closest(".dialog-close")) dialog.close(); });
+document.addEventListener("click", (event) => { const trigger = event.target.closest("[data-deployment]"); if (trigger) openDeployment(trigger.dataset.deployment); if (event.target.closest(".dialog-close")) dialog.close(); });
 dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => { document.querySelectorAll(".nav-link").forEach((item) => item.classList.remove("active")); link.classList.add("active"); }));
 
 loadDeployments();
-loadAdmin();
+loadHealth();
