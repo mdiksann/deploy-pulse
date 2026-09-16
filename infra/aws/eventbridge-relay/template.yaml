@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Relay CodePipeline EventBridge events to Deploy Pulse.
+
+Parameters:
+  DeployPulseWebhookURL:
+    Type: String
+    Description: Public Deploy Pulse /webhooks/aws-codepipeline URL.
+  RelaySharedSecret:
+    Type: String
+    NoEcho: true
+
+Resources:
+  CodePipelineRelay:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          DEPLOYPULSE_WEBHOOK_URL: !Ref DeployPulseWebhookURL
+          RELAY_SHARED_SECRET: !Ref RelaySharedSecret
+      Events:
+        PipelineExecution:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [aws.codepipeline]
+              detail-type: [CodePipeline Pipeline Execution State Change]
+    Metadata:
+      BuildMethod: makefile
