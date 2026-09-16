@@ -1,0 +1,5 @@
+.git
+.env
+deploy-pulse.db
+node_modules
+infra/aws/eventbridge-relay/.aws-sam
