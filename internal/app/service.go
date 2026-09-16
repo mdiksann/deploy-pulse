@@ -6,17 +6,19 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"log"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,71 +31,68 @@ var supportedProviders = map[string]bool{
 type Config struct {
 	WebhookSecrets map[string]string
 	SecretNames    []string
+	EncryptionKey  string
+	Production     bool
 }
 
 type Service struct {
-	store   *Store
-	config  Config
-	jobs    chan string
-	stop    chan struct{}
-	stopped sync.Once
+	store  *Store
+	config Config
 }
 
 func NewService(store *Store, config Config) *Service {
-	return &Service{store: store, config: config, jobs: make(chan string, 512), stop: make(chan struct{})}
+	return &Service{store: store, config: config}
 }
 
-func (s *Service) Start(ctx context.Context) { go s.worker(ctx); go s.retention(ctx) }
-func (s *Service) Close()                    { s.stopped.Do(func() { close(s.stop) }) }
+func (s *Service) ValidateConfig() error {
+	if s.config.Production && s.config.EncryptionKey == "" {
+		return errors.New("ENCRYPTION_KEY is required in production")
+	}
+	return nil
+}
+
+func (s *Service) ConfiguredProviders() []string {
+	providers := make([]string, 0, len(s.config.WebhookSecrets))
+	for _, provider := range SortedProviders() {
+		if s.config.WebhookSecrets[provider] != "" {
+			providers = append(providers, provider)
+		}
+	}
+	return providers
+}
 
 func (s *Service) Verify(provider string, header http.Header, body []byte) error {
 	secret := s.config.WebhookSecrets[provider]
 	if secret == "" {
 		return fmt.Errorf("provider %q is not configured", provider)
 	}
-	if provider == "gitlab" {
-		if !hmac.Equal([]byte(header.Get("X-Gitlab-Token")), []byte(secret)) {
-			return errors.New("invalid signature")
-		}
-		return nil
-	}
-	signature := header.Get("X-Hub-Signature-256")
-	if signature == "" {
-		signature = header.Get("X-DeployPulse-Signature")
-	}
-	if signature == "" {
-		signature = header.Get("X-Vercel-Signature")
-	}
-	if signature == "" {
-		signature = header.Get("X-Webhook-Signature")
-	}
-	if signature == "" {
-		signature = header.Get("Circleci-Signature")
-	}
-	signature = strings.TrimPrefix(signature, "sha256=")
-	if signature == "" {
-		return errors.New("missing signature")
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	want := hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(signature), []byte(want)) {
-		return errors.New("invalid signature")
-	}
-	return nil
-}
-
-func (s *Service) Enqueue(eventID string) bool {
-	select {
-	case s.jobs <- eventID:
-		return true
+	switch provider {
+	case "github":
+		return verifyHexHMAC(sha256.New, secret, body, header.Get("X-Hub-Signature-256"), "sha256=")
+	case "gitlab":
+		return verifyGitLab(secret, header, body)
+	case "circleci":
+		return verifyCircleCI(secret, header.Get("Circleci-Signature"), body)
+	case "vercel":
+		return verifyHexHMAC(sha1.New, secret, body, header.Get("X-Vercel-Signature"), "sha1=")
+	case "netlify":
+		return verifyNetlify(secret, header.Get("X-Webhook-Signature"), body)
+	case "aws-codepipeline":
+		return verifyHexHMAC(sha256.New, secret, body, header.Get("X-DeployPulse-Relay-Signature"), "sha256=")
 	default:
-		return false
+		return errors.New("unsupported provider")
 	}
 }
 
 func (s *Service) EncryptSecret(secret string) (string, error) {
-	key := sha256.Sum256([]byte(first(s.config.WebhookSecrets["encryption"], "deploy-pulse-development-key")))
+	keyMaterial := s.config.EncryptionKey
+	if keyMaterial == "" {
+		if s.config.Production {
+			return "", errors.New("ENCRYPTION_KEY is required in production")
+		}
+		keyMaterial = "deploy-pulse-development-key"
+	}
+	key := sha256.Sum256([]byte(keyMaterial))
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return "", err
@@ -109,55 +108,116 @@ func (s *Service) EncryptSecret(secret string) (string, error) {
 	return hex.EncodeToString(append(nonce, gcm.Seal(nil, nonce, []byte(secret), nil)...)), nil
 }
 
-func (s *Service) worker(ctx context.Context) {
-	for {
-		select {
-		case <-s.stop:
-			return
-		case eventID := <-s.jobs:
-			s.process(ctx, eventID)
-		}
-	}
-}
-
-func (s *Service) retention(ctx context.Context) {
-	_ = s.store.PruneRetained(ctx)
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-ticker.C:
-			if err := s.store.PruneRetained(ctx); err != nil {
-				log.Printf("retention prune failed: %v", err)
-			}
-		}
-	}
-}
-
-func (s *Service) process(ctx context.Context, eventID string) {
+// Process only returns after the deployment and webhook state commit. The queue ACKs after this call.
+func (s *Service) Process(ctx context.Context, eventID string) error {
 	event, err := s.store.Webhook(ctx, eventID)
 	if err != nil {
-		return
+		return err
 	}
 	deployment, checks, logs, err := s.parse(event)
 	if err != nil {
-		log.Printf("correlation_id=%s provider=%s event=%s parse_error=%q", event.CorrelationID, event.Provider, event.ProviderEventID, err)
-		_, _ = s.store.AddDeadLetter(ctx, event, err)
-		return
+		return fmt.Errorf("parse %s event %s: %w", event.Provider, event.ProviderEventID, err)
 	}
-	created, err := s.store.SaveDeployment(ctx, deployment, checks, logs)
+	created, err := s.store.SaveProcessedDeployment(ctx, event.ID, deployment, checks, logs)
 	if err != nil {
-		log.Printf("correlation_id=%s provider=%s event=%s storage_error=%q", event.CorrelationID, event.Provider, event.ProviderEventID, err)
-		_, _ = s.store.AddDeadLetter(ctx, event, err)
-		return
+		return err
 	}
 	if created {
-		_ = s.store.DeliverNotifications(ctx, deployment)
+		if err := s.store.DeliverNotifications(ctx, deployment); err != nil {
+			log.Printf("correlation_id=%s notification_error=%q", event.CorrelationID, err)
+		}
 	}
 	log.Printf("correlation_id=%s provider=%s event=%s deployment=%s status=%s", event.CorrelationID, event.Provider, event.ProviderEventID, deployment.ID, deployment.Status)
-	_ = s.store.MarkWebhook(ctx, event.ID, "processed")
+	return nil
+}
+
+func verifyHexHMAC(newHash func() hash.Hash, secret string, body []byte, signature, prefix string) error {
+	signature = strings.TrimPrefix(signature, prefix)
+	if signature == "" {
+		return errors.New("missing signature")
+	}
+	mac := hmac.New(newHash, []byte(secret))
+	_, _ = mac.Write(body)
+	want := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(signature), []byte(want)) {
+		return errors.New("invalid signature")
+	}
+	return nil
+}
+
+func verifyCircleCI(secret, signature string, body []byte) error {
+	for _, part := range strings.Split(signature, ",") {
+		version, value, found := strings.Cut(strings.TrimSpace(part), "=")
+		if version == "v1" && found {
+			return verifyHexHMAC(sha256.New, secret, body, value, "")
+		}
+	}
+	return errors.New("missing v1 signature")
+}
+
+func verifyGitLab(secret string, header http.Header, body []byte) error {
+	if signature := header.Get("Webhook-Signature"); signature != "" {
+		messageID, timestamp := header.Get("Webhook-Id"), header.Get("Webhook-Timestamp")
+		key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+		if err != nil || messageID == "" || timestamp == "" {
+			return errors.New("invalid GitLab signing token")
+		}
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write([]byte(messageID + "." + timestamp + "." + string(body)))
+		want := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+		for _, candidate := range strings.Fields(signature) {
+			if hmac.Equal([]byte(candidate), []byte(want)) {
+				return nil
+			}
+		}
+		return errors.New("invalid signature")
+	}
+	if hmac.Equal([]byte(header.Get("X-Gitlab-Token")), []byte(secret)) {
+		return nil
+	}
+	return errors.New("invalid signature")
+}
+
+// Netlify signs its notification as an HS256 JWS with an issuer and payload hash claim.
+func verifyNetlify(secret, token string, body []byte) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("missing JWS signature")
+	}
+	decode := func(value string, destination any) error {
+		bytes, err := base64.RawURLEncoding.DecodeString(value)
+		if err != nil {
+			bytes, err = base64.URLEncoding.DecodeString(value)
+			if err != nil {
+				return err
+			}
+		}
+		return json.Unmarshal(bytes, destination)
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+	}
+	var claims struct {
+		Issuer string `json:"iss"`
+		Hash   string `json:"sha256"`
+	}
+	if err := decode(parts[0], &header); err != nil || decode(parts[1], &claims) != nil || header.Algorithm != "HS256" || claims.Issuer != "netlify" {
+		return errors.New("invalid JWS payload")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		signature, err = base64.URLEncoding.DecodeString(parts[2])
+	}
+	if err != nil {
+		return errors.New("invalid JWS signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	got := sha256.Sum256(body)
+	if !hmac.Equal(signature, mac.Sum(nil)) || !hmac.Equal([]byte(claims.Hash), []byte(hex.EncodeToString(got[:]))) {
+		return errors.New("invalid signature")
+	}
+	return nil
 }
 
 func ProviderEventID(provider string, payload []byte) string {
