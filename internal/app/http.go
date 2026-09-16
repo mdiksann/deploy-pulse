@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,21 +15,36 @@ import (
 	"github.com/google/uuid"
 )
 
-type Server struct {
-	service *Service
-	store   *Store
+type ServerConfig struct {
+	DefaultWorkspaceID string
+	AdminAPIToken      string
 }
 
+type Server struct {
+	service   *Service
+	store     *Store
+	publisher Publisher
+	config    ServerConfig
+}
+
+// NewServer keeps the SQLite/test-friendly defaults. Production uses NewServerWithConfig.
 func NewServer(service *Service, store *Store) *Server {
-	return &Server{service: service, store: store}
+	return NewServerWithConfig(service, store, nil, ServerConfig{DefaultWorkspaceID: "demo"})
+}
+
+func NewServerWithConfig(service *Service, store *Store, publisher Publisher, config ServerConfig) *Server {
+	if config.DefaultWorkspaceID == "" {
+		config.DefaultWorkspaceID = "demo"
+	}
+	return &Server{service: service, store: store, publisher: publisher, config: config}
 }
 
 func (s *Server) Handler(static http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/{provider}", s.handleWebhook)
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "providers": SortedProviders()})
-	})
+	mux.HandleFunc("GET /healthz", s.live)
+	mux.HandleFunc("GET /readyz", s.ready)
+	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/deployments", s.listDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", s.getDeployment)
 	mux.HandleFunc("GET /api/notification-rules", s.listRules)
@@ -39,6 +55,65 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/provider-connections", s.saveConnection)
 	mux.Handle("/", static)
 	return requestLog(mux)
+}
+
+func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Healthy(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	if s.publisher == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
+	}
+	if err := s.publisher.Healthy(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	database, queue := "healthy", "healthy"
+	if s.store.Healthy(r.Context()) != nil {
+		database = "unavailable"
+	}
+	if s.publisher == nil || s.publisher.Healthy(r.Context()) != nil {
+		queue = "unavailable"
+	}
+	dlq, err := s.store.DeadLetterCount(r.Context(), s.workspaceID())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "health unavailable")
+		return
+	}
+	connected, err := s.store.ConnectedProviders(r.Context(), s.workspaceID())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "health unavailable")
+		return
+	}
+	connectedSet := make(map[string]bool, len(connected))
+	for _, provider := range connected {
+		connectedSet[provider] = true
+	}
+	for _, provider := range s.service.ConfiguredProviders() {
+		connectedSet[provider] = true
+	}
+	connected = connected[:0]
+	for _, provider := range SortedProviders() {
+		if connectedSet[provider] {
+			connected = append(connected, provider)
+		}
+	}
+	status := "ok"
+	code := http.StatusOK
+	if database != "healthy" || queue != "healthy" {
+		status, code = "degraded", http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]any{"status": status, "api": "healthy", "database": database, "queue": queue, "dead_letter_events": dlq, "providers": SortedProviders(), "connected_providers": connected})
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -69,15 +144,19 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if correlationID == "" {
 		correlationID = uuid.NewString()
 	}
-	event := WebhookEvent{ID: uuid.NewString(), WorkspaceID: workspaceID(r), Provider: provider, ProviderEventID: providerEventID, Payload: body, PayloadHash: hex.EncodeToString(hash[:]), CorrelationID: correlationID, ReceivedAt: time.Now().UTC()}
+	event := WebhookEvent{ID: uuid.NewString(), WorkspaceID: s.workspaceID(), Provider: provider, ProviderEventID: providerEventID, Payload: body, PayloadHash: hex.EncodeToString(hash[:]), CorrelationID: correlationID, ReceivedAt: time.Now().UTC()}
 	w.Header().Set("X-Correlation-ID", correlationID)
 	inserted, err := s.store.RecordWebhook(r.Context(), event)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not record webhook")
 		return
 	}
-	if inserted && !s.service.Enqueue(event.ID) {
-		go s.service.process(r.Context(), event.ID)
+	if inserted {
+		if s.publisher == nil || s.publisher.Publish(r.Context(), event.ID) != nil {
+			// The database record remains queued. Returning 503 asks the provider to retry its delivery.
+			writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+			return
+		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "duplicate": !inserted, "correlation_id": correlationID})
 }
@@ -92,7 +171,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if value := q.Get("end"); value != "" {
 		f.End, _ = time.Parse(time.RFC3339, value)
 	}
-	items, next, err := s.store.ListDeployments(r.Context(), workspaceID(r), f)
+	items, next, err := s.store.ListDeployments(r.Context(), s.workspaceID(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load deployments")
 		return
@@ -101,33 +180,41 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
-	detail, err := s.store.Deployment(r.Context(), workspaceID(r), r.PathValue("id"))
-	if errors.Is(err, io.EOF) {
+	detail, err := s.store.Deployment(r.Context(), s.workspaceID(), r.PathValue("id"))
+	if errors.Is(err, io.EOF) || strings.Contains(errString(err), "no rows") {
 		writeError(w, http.StatusNotFound, "deployment not found")
 		return
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			writeError(w, http.StatusNotFound, "deployment not found")
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "could not load deployment")
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
 
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := s.store.ListRules(r.Context(), workspaceID(r))
-	if err != nil {
-		writeError(w, 500, "could not load rules")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": rules})
+	rules, err := s.store.ListRules(r.Context(), s.workspaceID())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load rules")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": rules})
 }
+
 func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
-	if !isAdmin(r) {
-		writeError(w, http.StatusForbidden, "admin role required")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
 	var input struct {
@@ -146,61 +233,69 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 	if input.Environment == "" {
 		input.Environment = "*"
 	}
-	if input.Status != "failed" || (input.Channel != "slack" && input.Channel != "email") || input.Target == "" {
-		writeError(w, 400, "repository, environment, failed status, channel, and target are required")
+	if input.Status != StatusFailed || (input.Channel != "slack" && input.Channel != "email") || input.Target == "" {
+		writeError(w, http.StatusBadRequest, "repository, environment, failed status, channel, and target are required")
 		return
 	}
-	rule, err := s.store.CreateRule(r.Context(), NotificationRule{WorkspaceID: workspaceID(r), Repository: input.Repository, Environment: input.Environment, Status: input.Status, Channel: input.Channel, Target: input.Target})
+	rule, err := s.store.CreateRule(r.Context(), NotificationRule{WorkspaceID: s.workspaceID(), Repository: input.Repository, Environment: input.Environment, Status: input.Status, Channel: input.Channel, Target: input.Target})
 	if err != nil {
-		writeError(w, 500, "could not create rule")
+		writeError(w, http.StatusInternalServerError, "could not create rule")
 		return
 	}
-	writeJSON(w, 201, rule)
+	writeJSON(w, http.StatusCreated, rule)
 }
 
 func (s *Server) listDeadLetters(w http.ResponseWriter, r *http.Request) {
-	if !isAdmin(r) {
-		writeError(w, 403, "admin role required")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
-	items, err := s.store.ListDeadLetters(r.Context(), workspaceID(r))
+	items, err := s.store.ListDeadLetters(r.Context(), s.workspaceID())
 	if err != nil {
-		writeError(w, 500, "could not load dead-letter events")
+		writeError(w, http.StatusInternalServerError, "could not load dead-letter events")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
+
 func (s *Server) reprocessDeadLetter(w http.ResponseWriter, r *http.Request) {
-	if !isAdmin(r) {
-		writeError(w, 403, "admin role required")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
-	eventID, err := s.store.ReprocessDeadLetter(r.Context(), workspaceID(r), r.PathValue("id"))
+	dlqID := r.PathValue("id")
+	eventID, err := s.store.PrepareReprocess(r.Context(), s.workspaceID(), dlqID)
 	if err != nil {
-		writeError(w, 404, "dead-letter event not found")
+		writeError(w, http.StatusNotFound, "dead-letter event not found")
 		return
 	}
-	if !s.service.Enqueue(eventID) {
-		go s.service.process(r.Context(), eventID)
+	if s.publisher == nil || s.publisher.Publish(r.Context(), eventID) != nil {
+		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
 	}
-	writeJSON(w, 202, map[string]any{"reprocessed": true})
+	if err := s.store.CompleteReprocess(r.Context(), dlqID); err != nil {
+		writeError(w, http.StatusInternalServerError, "event queued but recovery record could not be cleared")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"reprocessed": true})
 }
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
-	if !isAdmin(r) {
-		writeError(w, 403, "admin role required")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
-	items, err := s.store.ListConnections(r.Context(), workspaceID(r))
+	items, err := s.store.ListConnections(r.Context(), s.workspaceID())
 	if err != nil {
-		writeError(w, 500, "could not load provider connections")
+		writeError(w, http.StatusInternalServerError, "could not load provider connections")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "supported_providers": SortedProviders()})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "supported_providers": SortedProviders()})
 }
+
 func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request) {
-	if !isAdmin(r) {
-		writeError(w, 403, "admin role required")
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin token required")
 		return
 	}
 	var input struct {
@@ -213,20 +308,20 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Provider = strings.ToLower(input.Provider)
 	if !supportedProviders[input.Provider] || input.Name == "" || input.Secret == "" {
-		writeError(w, 400, "provider, name, and secret are required")
+		writeError(w, http.StatusBadRequest, "provider, name, and secret are required")
 		return
 	}
 	encrypted, err := s.service.EncryptSecret(input.Secret)
 	if err != nil {
-		writeError(w, 500, "could not encrypt secret")
+		writeError(w, http.StatusInternalServerError, "could not encrypt secret")
 		return
 	}
-	connection, err := s.store.SaveConnection(r.Context(), workspaceID(r), input.Provider, input.Name, encrypted)
+	connection, err := s.store.SaveConnection(r.Context(), s.workspaceID(), input.Provider, input.Name, encrypted)
 	if err != nil {
-		writeError(w, 500, "could not save provider connection")
+		writeError(w, http.StatusInternalServerError, "could not save provider connection")
 		return
 	}
-	writeJSON(w, 201, connection)
+	writeJSON(w, http.StatusCreated, connection)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
@@ -234,18 +329,22 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
-		writeError(w, 400, "invalid JSON body")
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}
 	return true
 }
-func workspaceID(r *http.Request) string {
-	if id := r.Header.Get("X-Workspace-ID"); id != "" {
-		return id
+
+func (s *Server) workspaceID() string { return s.config.DefaultWorkspaceID }
+
+func (s *Server) isAdmin(r *http.Request) bool {
+	if s.config.AdminAPIToken == "" {
+		return false
 	}
-	return "demo"
+	value := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return hmac.Equal([]byte(value), []byte(s.config.AdminAPIToken))
 }
-func isAdmin(r *http.Request) bool { return r.Header.Get("X-Role") == "admin" }
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
