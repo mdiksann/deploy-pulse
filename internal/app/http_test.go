@@ -18,9 +18,7 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
 	service := NewService(store, Config{WebhookSecrets: map[string]string{"github": "test-secret"}})
-	service.Start(context.Background())
-	defer service.Close()
-	handler := NewServer(service, store).Handler(http.NotFoundHandler())
+	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo", AdminAPIToken: "admin-token"}).Handler(http.NotFoundHandler())
 	payload, err := os.ReadFile(filepath.Join("testdata", "github.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +60,36 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestAdminEndpointsRequireBearerToken(t *testing.T) {
+	store := testStore(t)
+	defer store.Close()
+	service := NewService(store, Config{})
+	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo", AdminAPIToken: "admin-token"}).Handler(http.NotFoundHandler())
+	for _, token := range []string{"", "Bearer wrong"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/provider-connections", nil)
+		request.Header.Set("Authorization", token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("token %q status=%d, want %d", token, response.Code, http.StatusUnauthorized)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/provider-connections", nil)
+	request.Header.Set("Authorization", "Bearer admin-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid token status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+type processingPublisher struct{ service *Service }
+
+func (p processingPublisher) Publish(ctx context.Context, eventID string) error {
+	return p.service.Process(ctx, eventID)
+}
+func (processingPublisher) Healthy(context.Context) error { return nil }
 
 func signature(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
