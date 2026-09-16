@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: deploypulse
+      POSTGRES_USER: deploypulse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deploypulse -d deploypulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment: &deploypulse-env
+      APP_ENV: production
+      DATABASE_URL: postgres://deploypulse:${POSTGRES_PASSWORD}@postgres:5432/deploypulse?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      DEFAULT_WORKSPACE_ID: ${DEFAULT_WORKSPACE_ID:-default}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?set ADMIN_API_TOKEN in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
+      WEBHOOK_SECRET_GITHUB: ${WEBHOOK_SECRET_GITHUB:-}
+      WEBHOOK_SECRET_GITLAB: ${WEBHOOK_SECRET_GITLAB:-}
+      WEBHOOK_SECRET_CIRCLECI: ${WEBHOOK_SECRET_CIRCLECI:-}
+      WEBHOOK_SECRET_VERCEL: ${WEBHOOK_SECRET_VERCEL:-}
+      WEBHOOK_SECRET_NETLIFY: ${WEBHOOK_SECRET_NETLIFY:-}
+      AWS_RELAY_SECRET: ${AWS_RELAY_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    build: .
+    command: ["api"]
+    environment: *deploypulse-env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  worker:
+    build: .
+    command: ["worker"]
+    environment: *deploypulse-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
