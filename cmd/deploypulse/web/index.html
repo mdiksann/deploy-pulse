@@ -37,7 +37,7 @@
         </nav>
         <div class="sidebar-bottom">
           <a class="nav-link" href="#settings"><svg><use href="#i-settings"/></svg>Settings</a>
-          <p><span class="status-dot success"></span>All systems reporting</p>
+          <p><span id="system-status-dot" class="status-dot muted"></span><span id="system-status">Checking runtime health</span></p>
         </div>
       </aside>
 
@@ -81,11 +81,11 @@
             </article>
           </section>
 
-          <dl class="health-strip" aria-label="Release health summary">
-            <div><dt>Successful releases</dt><dd id="success-count">—</dd><small>in selected range</small></div>
-            <div><dt>Failed releases</dt><dd id="failed-count">—</dd><small>need a review</small></div>
-            <div><dt>Median duration</dt><dd id="duration-value">2m 18s</dd><small>completed deployments</small></div>
-            <div><dt>Production state</dt><dd class="production-state"><span class="status-dot success"></span>Stable</dd><small>no active rollback</small></div>
+          <dl class="health-strip" aria-label="Runtime and release health">
+            <div><dt>API</dt><dd id="api-health">Checking</dd><small>service liveness</small></div>
+            <div><dt>Database</dt><dd id="database-health">Checking</dd><small>PostgreSQL readiness</small></div>
+            <div><dt>Queue</dt><dd id="queue-health">Checking</dd><small>Redis Streams readiness</small></div>
+            <div><dt>Recovery queue</dt><dd id="dlq-count">—</dd><small>dead-letter events</small></div>
           </dl>
 
           <section class="deployment-section" id="deployments" aria-labelledby="deployments-title">
@@ -100,15 +100,13 @@
 
           <section class="secondary-grid">
             <article id="alerts" class="quiet-panel"><div class="panel-heading"><div><p class="section-note">Notifications</p><h2>Alerting stays quiet until it matters.</h2></div><a href="#settings">Manage rules</a></div><div class="rule-row"><div class="rule-icon"><svg aria-hidden="true"><use href="#i-bell"/></svg></div><div><strong>Production failure</strong><span>Send one Slack alert to <code>#release-watch</code>; send one recovery when the next release succeeds.</span></div><span class="rule-active"><i></i>Active</span></div></article>
-            <article id="connections" class="quiet-panel"><div class="panel-heading"><div><p class="section-note">Ingestion</p><h2>Provider signals</h2></div><a href="#settings">Connections</a></div><ul class="provider-list"><li><span class="provider-badge github">GH</span><span>GitHub Actions</span><small><i class="status-dot success"></i>Receiving</small></li><li><span class="provider-badge vercel">V</span><span>Vercel</span><small><i class="status-dot success"></i>Receiving</small></li><li><span class="provider-badge gitlab">GL</span><span>GitLab CI</span><small><i class="status-dot muted"></i>Not connected</small></li><li><span class="provider-badge aws">AWS</span><span>AWS CodePipeline</span><small><i class="status-dot muted"></i>Not connected</small></li></ul></article>
+            <article id="connections" class="quiet-panel"><div class="panel-heading"><div><p class="section-note">Ingestion</p><h2>Provider connections</h2></div><a href="#settings">Runtime</a></div><ul id="provider-health-list" class="provider-list" aria-live="polite"><li><span>Loading configured providers</span></li></ul></article>
           </section>
 
-          <section id="settings" class="admin-section" aria-labelledby="admin-title">
-            <div class="section-header"><div><p class="section-note">Workspace administration</p><h2 id="admin-title">Connections, notifications, and recovery</h2></div><p class="result-count">Admin controls</p></div>
+          <section id="settings" class="admin-section" aria-labelledby="runtime-title">
+            <div class="section-header"><div><p class="section-note">Runtime operations</p><h2 id="runtime-title">Operational recovery stays outside the browser.</h2></div><p class="result-count">Protected API</p></div>
             <div class="admin-grid">
-              <article class="admin-panel"><h3>Notification rule</h3><p>Create a failure alert. A subsequent success sends one recovery message.</p><form id="rule-form"><label>Repository<input name="repository" value="*" required></label><label>Environment<select name="environment"><option value="*">Every environment</option><option value="production">Production</option><option value="staging">Staging</option></select></label><label>Channel<select name="channel"><option value="slack">Slack</option><option value="email">Email</option></select></label><label>Destination<input name="target" placeholder="#release-watch" required></label><button class="primary-button" type="submit">Save rule</button></form><div id="rules-list" class="compact-list" aria-live="polite"></div></article>
-              <article class="admin-panel"><h3>Provider connection</h3><p>Secrets are encrypted before they are persisted. This local MVP never returns them.</p><form id="connection-form"><label>Provider<select name="provider"><option value="github">GitHub Actions</option><option value="gitlab">GitLab CI</option><option value="circleci">CircleCI</option><option value="vercel">Vercel</option><option value="netlify">Netlify</option><option value="aws-codepipeline">AWS CodePipeline</option></select></label><label>Connection name<input name="name" placeholder="Production webhooks" required></label><label>Webhook secret<input name="secret" type="password" autocomplete="new-password" required></label><button class="primary-button" type="submit">Save connection</button></form><div id="connections-list" class="compact-list" aria-live="polite"></div></article>
-              <article class="admin-panel dead-letter-panel"><h3>Dead-letter events</h3><p>Parsing failures wait here without blocking other providers.</p><div id="dead-letter-list" class="dead-letter-list" aria-live="polite"><span class="admin-empty">Loading event recovery queue</span></div></article>
+              <article class="admin-panel dead-letter-panel"><h3>Dead-letter recovery</h3><p id="runtime-note">Signed webhook events are retained for 90 days; sanitized logs for 30 days. Inspect and reprocess events with an authenticated administrative client after resolving their cause.</p><div class="compact-item"><span><strong>Recovery queue</strong> · events that reached five attempts</span><span>Bearer token required</span></div></article>
             </div>
           </section>
         </main>
