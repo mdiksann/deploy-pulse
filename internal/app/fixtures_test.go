@@ -97,7 +97,13 @@ func TestDeadLetterDoesNotBlockLaterDeployment(t *testing.T) {
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	service.process(ctx, bad.ID)
+	processErr := service.Process(ctx, bad.ID)
+	if processErr == nil {
+		t.Fatal("invalid payload was processed")
+	}
+	if _, err := store.AddDeadLetter(ctx, bad, processErr, 5); err != nil {
+		t.Fatal(err)
+	}
 	payload, err := os.ReadFile(filepath.Join("testdata", "github.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +113,9 @@ func TestDeadLetterDoesNotBlockLaterDeployment(t *testing.T) {
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	service.process(ctx, good.ID)
+	if err := service.Process(ctx, good.ID); err != nil {
+		t.Fatal(err)
+	}
 	items, _, err := store.ListDeployments(ctx, "workspace", ListFilter{})
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +129,39 @@ func TestDeadLetterDoesNotBlockLaterDeployment(t *testing.T) {
 	}
 	if len(deadLetters) != 1 {
 		t.Fatalf("dead letters=%d, want 1", len(deadLetters))
+	}
+}
+
+func TestProcessCommitsWebhookAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	defer store.Close()
+	payload, err := os.ReadFile(filepath.Join("testdata", "github.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := WebhookEvent{ID: "commit", WorkspaceID: "workspace", Provider: "github", ProviderEventID: ProviderEventID("github", payload), Payload: payload, PayloadHash: "hash", CorrelationID: "commit", ReceivedAt: time.Now().UTC()}
+	created, err := store.RecordWebhook(ctx, event)
+	if err != nil || !created {
+		t.Fatalf("record event: created=%v err=%v", created, err)
+	}
+	service := NewService(store, Config{})
+	if err := service.Process(ctx, event.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Process(ctx, event.ID); err != nil {
+		t.Fatal(err)
+	}
+	var deployments int
+	var status string
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM deployments`).Scan(&deployments); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT status FROM webhook_events WHERE id=?`, event.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if deployments != 1 || status != "processed" {
+		t.Fatalf("deployments=%d webhook_status=%q", deployments, status)
 	}
 }
 
