@@ -23,5 +23,5 @@ if ! awk '$1 == 202 { next } { exit 1 }' "$task_results"; then
   exit 1
 fi
 task_p95_index=$(( (task_requests * 95 + 99) / 100 ))
-task_p95=$(sort -k2n "$task_results" | awk -v index="$task_p95_index" 'NR == index { print $2 }')
+task_p95=$(sort -k2n "$task_results" | awk -v p95_index="$task_p95_index" 'NR == p95_index { print $2 }')
 printf 'accepted=%s p95_seconds=%s\n' "$task_requests" "$task_p95"
