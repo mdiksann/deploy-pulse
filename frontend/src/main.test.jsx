@@ -26,7 +26,7 @@ describe("authentication flow", () => {
   it("shows the public landing page with signup and login CTAs", async () => {
     window.history.pushState({}, "", "/");
     render(<App/>);
-    expect(await screen.findByRole("heading", { name: /monitor deployments/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /one-click for release defense/i })).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /get started/i }).some((link) => link.getAttribute("href") === "/signup")).toBe(true);
     expect(screen.getAllByRole("link", { name: /^sign in$/i }).every((link) => link.getAttribute("href") === "/login")).toBe(true);
     expect(screen.getByRole("heading", { name: /less hunting/i })).toBeInTheDocument();
