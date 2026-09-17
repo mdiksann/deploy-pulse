@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 
-export function OscilloscopeCanvas({ activePulse = false, intensity = 1, tone = "amber" }) {
+export function OscilloscopeCanvas({ activePulse = false, intensity = 1, tone = "cyan" }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export function OscilloscopeCanvas({ activePulse = false, intensity = 1, tone = 
       ctx.clearRect(0, 0, width, height);
 
       // Background subtle grid
-      ctx.strokeStyle = "rgba(35, 43, 54, 0.45)";
+      ctx.strokeStyle = "rgba(14, 165, 233, 0.12)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       const gridStep = 20;
@@ -58,15 +58,15 @@ export function OscilloscopeCanvas({ activePulse = false, intensity = 1, tone = 
       ctx.stroke();
 
       // Center crosshair axis
-      ctx.strokeStyle = "rgba(73, 86, 105, 0.5)";
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
       ctx.beginPath();
       ctx.moveTo(0, height / 2);
       ctx.lineTo(width, height / 2);
       ctx.stroke();
 
       // Waveform calculation
-      const primaryColor = tone === "emerald" ? "#00f59b" : tone === "crimson" ? "#ff4d4d" : "#ffb020";
-      const glowColor = tone === "emerald" ? "rgba(0, 245, 155, 0.25)" : tone === "crimson" ? "rgba(255, 77, 77, 0.25)" : "rgba(255, 176, 32, 0.25)";
+      const primaryColor = tone === "cyan" ? "#38bdf8" : tone === "emerald" ? "#10b981" : tone === "crimson" ? "#f43f5e" : "#06b6d4";
+      const glowColor = tone === "cyan" ? "rgba(56, 189, 248, 0.45)" : tone === "emerald" ? "rgba(16, 185, 129, 0.4)" : "rgba(244, 63, 94, 0.4)";
 
       phase += 0.08;
       if (activePulse) {
@@ -79,7 +79,7 @@ export function OscilloscopeCanvas({ activePulse = false, intensity = 1, tone = 
       ctx.beginPath();
       ctx.strokeStyle = primaryColor;
       ctx.shadowColor = glowColor;
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 10;
       ctx.lineWidth = 2;
 
       const midY = height / 2;
