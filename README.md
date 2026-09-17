@@ -2,7 +2,7 @@
 
 Deploy Pulse ingests signed deployment webhooks, stores the raw event durably, then processes it through Redis Streams into a sanitized deployment timeline. PostgreSQL is the production store; SQLite is retained for local development and tests.
 
-## Run production locally
+## Services and local production run
 
 ```bash
 cp .env.compose.example .env
@@ -10,11 +10,11 @@ cp .env.compose.example .env
 docker compose up --build
 ```
 
-The API is at [http://localhost:8080](http://localhost:8080). Compose starts PostgreSQL and Redis first, runs idempotent migrations, then starts the API and worker. Check liveness with `/healthz` and dependency readiness with `/readyz`.
+The frontend is at [http://localhost:3000](http://localhost:3000); the API is at [http://localhost:8080](http://localhost:8080). Compose starts PostgreSQL and Redis first, runs idempotent migrations, then starts the API, worker, and Nginx frontend. Check API liveness with `/healthz` and dependency readiness with `/readyz`.
 
 The runtime roles are separate:
 
-- `deploypulse api` serves the UI and HTTP endpoints.
+- `deploypulse api` serves API, webhook, health, and authentication endpoints.
 - `deploypulse worker` consumes `deploypulse:events` with consumer group `deploypulse-workers`.
 - `deploypulse migrate` applies entries in `schema_migrations` and can be rerun safely.
 
@@ -37,18 +37,15 @@ Webhook writes are idempotent by `(workspace_id, provider, provider_event_id)`. 
 
 `DEFAULT_WORKSPACE_ID` scopes this release to one workspace. Request-provided workspace headers are intentionally ignored.
 
-## Administration
+## Administration and authentication
 
-`ADMIN_API_TOKEN` is required for provider connections, notification rules, DLQ inspection, and DLQ reprocessing. Send it only from an administrative deployment or client:
+Create an account at the frontend `/signup`, then sign in immediately. Every account is an `admin` in `DEFAULT_WORKSPACE_ID`. Email verification and SMTP are not required. Sessions are database-backed, last eight hours, and are sent only as an HttpOnly, SameSite cookie. Use `/login`, `GET /api/auth/me`, and `POST /api/auth/logout` for the session flow.
 
-```bash
-curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-  http://localhost:8080/api/dead-letter-events
-```
-
-The browser dashboard never stores or sends this token. It displays operational health, connected providers, and DLQ count from `GET /api/health`.
+`ADMIN_API_TOKEN` and Bearer authentication were removed as a breaking change. Provider connections, notification rules, and DLQ operations require a verified session cookie. Browser mutations require an `Origin` included in `FRONTEND_ORIGINS`.
 
 Provider secrets saved through the API are encrypted with `ENCRYPTION_KEY`; the API never returns them. `ENCRYPTION_KEY` is mandatory whenever `APP_ENV=production`.
+
+Frontend/backend deployments use separate origins. Set `FRONTEND_ORIGINS` to the exact comma-separated frontend origins and `API_PUBLIC_URL` for the browser API base URL. The production default is `https://app.example.com` for the frontend and `https://api.example.com` for the API.
 
 ## Operate
 
@@ -60,12 +57,12 @@ docker compose exec -T postgres pg_dump -U deploypulse deploypulse > deploypulse
 
 Restore into a stopped/replacement database with `psql -U deploypulse deploypulse < backup.sql`, then start Compose and let the migrator run.
 
-To rotate `ADMIN_API_TOKEN`, update `.env`/the secret manager and restart API containers; all previous tokens stop working immediately. To rotate `ENCRYPTION_KEY`, first re-encrypt saved provider secrets with a dedicated migration or re-enter each provider secret—do not simply change the variable. Rotate a webhook secret at its provider and in the deployment together, accepting both only during a separately planned transition.
+To rotate `ENCRYPTION_KEY`, first re-encrypt saved provider secrets with a dedicated migration or re-enter each provider secret—do not simply change the variable. Rotate a webhook secret at its provider and in the deployment together, accepting both only during a separately planned transition.
 
 To reprocess a dead letter after fixing the cause:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+curl -X POST -b cookies.txt -H "Origin: http://localhost:8080" \
   http://localhost:8080/api/dead-letter-events/<dlq-id>/reprocess
 ```
 
@@ -86,9 +83,13 @@ Set `DeployPulseWebhookURL` to the public AWS webhook endpoint and use the exact
 ## Verify
 
 ```bash
-go test ./...
+cd frontend && npm test && npm run build
+cd ../backend && go test ./... && go vet ./...
+cd ..
 docker compose config
 ```
+
+The Vite client reads `VITE_API_BASE_URL`; local Compose passes `http://localhost:8080` automatically. For a separate production deployment, build the frontend with `VITE_API_BASE_URL=https://api.example.com` and configure the API allowlist with `FRONTEND_ORIGINS=https://app.example.com`.
 
 Run the included local load check after Compose is healthy:
 
