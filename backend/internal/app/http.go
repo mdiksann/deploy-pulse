@@ -1,13 +1,13 @@
 package app
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +17,9 @@ import (
 
 type ServerConfig struct {
 	DefaultWorkspaceID string
-	AdminAPIToken      string
+	Production         bool
+	FrontendOrigins    []string
+	APIPublicURL       string
 }
 
 type Server struct {
@@ -39,22 +41,64 @@ func NewServerWithConfig(service *Service, store *Store, publisher Publisher, co
 	return &Server{service: service, store: store, publisher: publisher, config: config}
 }
 
-func (s *Server) Handler(static http.Handler) http.Handler {
+func (s *Server) Handler(_ ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/{provider}", s.handleWebhook)
 	mux.HandleFunc("GET /healthz", s.live)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/analytics/deployments", s.analytics)
 	mux.HandleFunc("GET /api/deployments", s.listDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", s.getDeployment)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/signup", s.signup)
+	mux.HandleFunc("GET /api/auth/me", s.me)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
 	mux.HandleFunc("GET /api/notification-rules", s.listRules)
 	mux.HandleFunc("POST /api/notification-rules", s.createRule)
 	mux.HandleFunc("GET /api/dead-letter-events", s.listDeadLetters)
 	mux.HandleFunc("POST /api/dead-letter-events/{id}/reprocess", s.reprocessDeadLetter)
 	mux.HandleFunc("GET /api/provider-connections", s.listConnections)
 	mux.HandleFunc("POST /api/provider-connections", s.saveConnection)
-	mux.Handle("/", static)
-	return requestLog(mux)
+	return requestLog(s.cors(mux))
+}
+
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Add("Vary", "Origin")
+		origin := r.Header.Get("Origin")
+		if s.allowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		if r.Method == http.MethodOptions {
+			if !s.allowedOrigin(origin) {
+				writeError(w, http.StatusForbidden, "origin not allowed")
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) allowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range s.config.FrontendOrigins {
+		if strings.TrimRight(allowed, "/") == strings.TrimRight(origin, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
@@ -164,7 +208,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	f := ListFilter{Repository: q.Get("repository"), Branch: q.Get("branch"), Environment: q.Get("environment"), Provider: q.Get("provider"), Status: q.Get("status"), Actor: q.Get("actor"), Cursor: q.Get("cursor"), Limit: limit}
+	f := ListFilter{Repository: q.Get("repository"), Branch: q.Get("branch"), Environment: q.Get("environment"), Provider: q.Get("provider"), Status: q.Get("status"), Actor: q.Get("actor"), Query: q.Get("q"), Cursor: q.Get("cursor"), Limit: limit}
 	if value := q.Get("start"); value != "" {
 		f.Start, _ = time.Parse(time.RFC3339, value)
 	}
@@ -177,6 +221,96 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+func (s *Server) analytics(w http.ResponseWriter, r *http.Request) {
+	days, err := strconv.Atoi(r.URL.Query().Get("days"))
+	if err != nil {
+		days = 7
+	}
+	data, err := s.store.DeploymentAnalyticsFiltered(r.Context(), s.workspaceID(), days, r.URL.Query().Get("environment"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load deployment analytics")
+		return
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	email, emailErr := normalizeEmail(input.Email)
+	if emailErr != nil || validatePassword(input.Password) != nil {
+		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	stored, err := s.store.UserByEmail(r.Context(), email)
+	if err != nil || bcryptCompare(stored.PasswordHash, input.Password) != nil {
+		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	if err := s.issueSession(w, r, stored.User); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create session")
+		return
+	}
+	writeJSON(w, http.StatusOK, userResponse(stored.User))
+}
+
+func firstAuthError(emailErr, passwordErr error) string {
+	if emailErr != nil {
+		return emailErr.Error()
+	}
+	return passwordErr.Error()
+}
+
+func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
+	var input struct{ Email, Password string }
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	email, emailErr := normalizeEmail(input.Email)
+	passwordErr := validatePassword(input.Password)
+	if emailErr != nil || passwordErr != nil {
+		writeError(w, http.StatusBadRequest, firstAuthError(emailErr, passwordErr))
+		return
+	}
+	hash, err := passwordHash(input.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+	_, _, err = s.store.CreatePendingUser(r.Context(), email, hash, s.workspaceID())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create account")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"message": "Account created. You can sign in now."})
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.authenticateSession(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "admin authentication required")
+		return
+	}
+	writeJSON(w, http.StatusOK, userResponse(user))
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		if !s.sameOrigin(r) {
+			writeError(w, http.StatusForbidden, "origin required for browser mutation")
+			return
+		}
+		_ = s.store.RevokeSession(r.Context(), hashToken(cookie.Value))
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, Expires: time.Unix(1, 0).UTC(), HttpOnly: true, Secure: s.config.Production, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
@@ -200,8 +334,7 @@ func errString(err error) string {
 }
 
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
 	rules, err := s.store.ListRules(r.Context(), s.workspaceID())
@@ -213,8 +346,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, true) {
 		return
 	}
 	var input struct {
@@ -246,8 +378,7 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDeadLetters(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
 	items, err := s.store.ListDeadLetters(r.Context(), s.workspaceID())
@@ -259,8 +390,7 @@ func (s *Server) listDeadLetters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reprocessDeadLetter(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, true) {
 		return
 	}
 	dlqID := r.PathValue("id")
@@ -281,8 +411,7 @@ func (s *Server) reprocessDeadLetter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
 	items, err := s.store.ListConnections(r.Context(), s.workspaceID())
@@ -294,8 +423,7 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin token required")
+	if !s.authorizeAdmin(w, r, true) {
 		return
 	}
 	var input struct {
@@ -338,11 +466,34 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 func (s *Server) workspaceID() string { return s.config.DefaultWorkspaceID }
 
 func (s *Server) isAdmin(r *http.Request) bool {
-	if s.config.AdminAPIToken == "" {
+	_, ok := s.authenticateSession(r)
+	return ok
+}
+
+func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request, mutate bool) bool {
+	if !s.isAdmin(r) {
+		writeError(w, http.StatusUnauthorized, "admin authentication required")
 		return false
 	}
-	value := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return hmac.Equal([]byte(value), []byte(s.config.AdminAPIToken))
+	if mutate {
+		if !s.sameOrigin(r) {
+			writeError(w, http.StatusForbidden, "invalid request origin")
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	if len(s.config.FrontendOrigins) > 0 {
+		return s.allowedOrigin(origin)
+	}
+	parsed, err := url.Parse(origin)
+	return err == nil && parsed.Host != "" && parsed.Host == r.Host
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

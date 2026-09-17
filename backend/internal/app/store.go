@@ -126,6 +126,22 @@ CREATE TABLE IF NOT EXISTS dead_letter_events (
 );
 CREATE INDEX IF NOT EXISTS deployments_workspace_started ON deployments(workspace_id, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS webhook_events_status ON webhook_events(status, received_at);
+`}, {version: "002_auth", sql: `
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'admin', workspace_id TEXT NOT NULL,
+  email_verified_at TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL, consumed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS email_verification_user ON email_verification_tokens(user_id);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id, expires_at);
 `}}
 
 // Migrate is safe to run repeatedly and is also exposed for the Compose migrator.
@@ -167,6 +183,109 @@ func (s *Store) PruneRetained(ctx context.Context) error {
 		return err
 	}
 	_, err := s.exec(ctx, `DELETE FROM webhook_events WHERE received_at < ?`, time.Now().UTC().AddDate(0, 0, -90).Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) CreatePendingUser(ctx context.Context, email, passwordHash, workspaceID string) (User, bool, error) {
+	user := User{ID: uuid.NewString(), Email: email, Role: "admin", WorkspaceID: workspaceID, CreatedAt: time.Now().UTC()}
+	result, err := s.exec(ctx, `INSERT INTO users(id,email,password_hash,role,workspace_id,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING`, user.ID, user.Email, passwordHash, user.Role, user.WorkspaceID, user.CreatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return user, false, err
+	}
+	created, err := result.RowsAffected()
+	return user, created == 1, err
+}
+
+type storedUser struct {
+	User
+	PasswordHash string
+}
+
+func (s *Store) UserByEmail(ctx context.Context, email string) (storedUser, error) {
+	return s.scanUser(s.queryRow(ctx, `SELECT id,email,password_hash,role,workspace_id,email_verified_at,created_at FROM users WHERE email=?`, email))
+}
+
+func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
+	user, err := s.scanUser(s.queryRow(ctx, `SELECT id,email,password_hash,role,workspace_id,email_verified_at,created_at FROM users WHERE id=?`, id))
+	return user.User, err
+}
+
+func (s *Store) scanUser(row scanner) (storedUser, error) {
+	var user storedUser
+	var verified sql.NullString
+	var created string
+	if err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Role, &user.WorkspaceID, &verified, &created); err != nil {
+		return user, err
+	}
+	if verified.Valid && verified.String != "" {
+		value, _ := time.Parse(time.RFC3339Nano, verified.String)
+		user.EmailVerifiedAt = &value
+	}
+	user.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return user, nil
+}
+
+func (s *Store) CreateVerificationToken(ctx context.Context, userID, tokenHash string, expires time.Time) error {
+	_, err := s.exec(ctx, `INSERT INTO email_verification_tokens(token_hash,user_id,expires_at) VALUES(?,?,?)`, tokenHash, userID, expires.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ConsumeVerificationToken(ctx context.Context, tokenHash string, now time.Time) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	var userID, expires, consumed string
+	err = tx.QueryRowContext(ctx, s.rebind(`SELECT user_id,expires_at,COALESCE(consumed_at,'') FROM email_verification_tokens WHERE token_hash=?`), tokenHash).Scan(&userID, &expires, &consumed)
+	if err != nil {
+		return User{}, err
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
+	if err != nil || consumed != "" || !now.Before(expiresAt) {
+		return User{}, fmt.Errorf("verification token is invalid or expired")
+	}
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, s.rebind(`UPDATE email_verification_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL`), stamp, tokenHash); err != nil {
+		return User{}, err
+	}
+	if _, err = tx.ExecContext(ctx, s.rebind(`UPDATE users SET email_verified_at=? WHERE id=?`), stamp, userID); err != nil {
+		return User{}, err
+	}
+	var user storedUser
+	var verified, created string
+	if err = tx.QueryRowContext(ctx, s.rebind(`SELECT id,email,password_hash,role,workspace_id,email_verified_at,created_at FROM users WHERE id=?`), userID).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Role, &user.WorkspaceID, &verified, &created); err != nil {
+		return User{}, err
+	}
+	verifiedAt, _ := time.Parse(time.RFC3339Nano, verified)
+	user.EmailVerifiedAt = &verifiedAt
+	user.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return user.User, tx.Commit()
+}
+
+func (s *Store) CreateSession(ctx context.Context, sessionHash, userID string, expires time.Time) error {
+	_, err := s.exec(ctx, `INSERT INTO sessions(session_id_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`, sessionHash, userID, expires.UTC().Format(time.RFC3339Nano), now())
+	return err
+}
+
+func (s *Store) SessionUser(ctx context.Context, sessionHash string, now time.Time) (User, error) {
+	var user User
+	var verified sql.NullString
+	var created string
+	err := s.queryRow(ctx, `SELECT u.id,u.email,u.role,u.workspace_id,u.email_verified_at,u.created_at FROM sessions sess JOIN users u ON u.id=sess.user_id WHERE sess.session_id_hash=? AND sess.revoked_at IS NULL AND sess.expires_at>?`, sessionHash, now.UTC().Format(time.RFC3339Nano)).Scan(&user.ID, &user.Email, &user.Role, &user.WorkspaceID, &verified, &created)
+	if err != nil {
+		return user, err
+	}
+	if verified.Valid && verified.String != "" {
+		value, _ := time.Parse(time.RFC3339Nano, verified.String)
+		user.EmailVerifiedAt = &value
+	}
+	user.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return user, nil
+}
+
+func (s *Store) RevokeSession(ctx context.Context, sessionHash string) error {
+	_, err := s.exec(ctx, `UPDATE sessions SET revoked_at=? WHERE session_id_hash=? AND revoked_at IS NULL`, now(), sessionHash)
 	return err
 }
 
@@ -266,6 +385,13 @@ func (s *Store) ListDeployments(ctx context.Context, workspaceID string, f ListF
 			clauses, args = append(clauses, filter.column+"=?"), append(args, filter.value)
 		}
 	}
+	if f.Query != "" {
+		query := "%" + strings.ToLower(f.Query) + "%"
+		clauses = append(clauses, `(LOWER(repository) LIKE ? OR LOWER(branch) LIKE ? OR LOWER(commit_sha) LIKE ? OR LOWER(actor) LIKE ? OR LOWER(provider) LIKE ? OR LOWER(environment) LIKE ? OR LOWER(status) LIKE ?)`)
+		for range 7 {
+			args = append(args, query)
+		}
+	}
 	if !f.Start.IsZero() {
 		clauses, args = append(clauses, "started_at>=?"), append(args, f.Start.UTC().Format(time.RFC3339Nano))
 	}
@@ -298,6 +424,72 @@ func (s *Store) ListDeployments(ctx context.Context, workspaceID string, f ListF
 		next, items = encodeCursor(last.StartedAt, last.ID), items[:f.Limit]
 	}
 	return items, next, nil
+}
+
+func (s *Store) DeploymentAnalytics(ctx context.Context, workspaceID string, days int) (DeploymentAnalytics, error) {
+	return s.DeploymentAnalyticsFiltered(ctx, workspaceID, days, "")
+}
+
+func (s *Store) DeploymentAnalyticsFiltered(ctx context.Context, workspaceID string, days int, environment string) (DeploymentAnalytics, error) {
+	if days < 1 {
+		days = 7
+	}
+	if days > 90 {
+		days = 90
+	}
+	end := time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	start := end.AddDate(0, 0, -days)
+	result := DeploymentAnalytics{Days: make([]AnalyticsDay, days)}
+	buckets := make(map[string]*AnalyticsDay, days)
+	for i := range result.Days {
+		date := start.AddDate(0, 0, i).Format("2006-01-02")
+		result.Days[i].Date = date
+		buckets[date] = &result.Days[i]
+	}
+	query := `SELECT status,started_at FROM deployments WHERE workspace_id=? AND started_at>=? AND started_at<?`
+	args := []any{workspaceID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+	if environment != "" {
+		query += ` AND environment=?`
+		args = append(args, environment)
+	}
+	rows, err := s.query(ctx, query, args...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status, started string
+		if err := rows.Scan(&status, &started); err != nil {
+			return result, err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, started)
+		if err != nil {
+			continue
+		}
+		bucket := buckets[parsed.UTC().Format("2006-01-02")]
+		if bucket == nil {
+			continue
+		}
+		bucket.Total++
+		result.Summary.Total++
+		switch Status(status) {
+		case StatusSuccess:
+			bucket.Success++
+			result.Summary.Success++
+		case StatusFailed:
+			bucket.Failed++
+			result.Summary.Failed++
+		default:
+			bucket.Other++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	if result.Summary.Total > 0 {
+		result.Summary.SuccessRate = float64(result.Summary.Success) / float64(result.Summary.Total) * 100
+	}
+	return result, nil
 }
 
 type scanner interface{ Scan(...any) error }

@@ -18,7 +18,7 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
 	service := NewService(store, Config{WebhookSecrets: map[string]string{"github": "test-secret"}})
-	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo", AdminAPIToken: "admin-token"}).Handler(http.NotFoundHandler())
+	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo"}).Handler(http.NotFoundHandler())
 	payload, err := os.ReadFile(filepath.Join("testdata", "github.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,26 +61,40 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	}
 }
 
-func TestAdminEndpointsRequireBearerToken(t *testing.T) {
+func TestAdminEndpointsRequireSessionAndRejectBearerToken(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
 	service := NewService(store, Config{})
-	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo", AdminAPIToken: "admin-token"}).Handler(http.NotFoundHandler())
-	for _, token := range []string{"", "Bearer wrong"} {
-		request := httptest.NewRequest(http.MethodGet, "/api/provider-connections", nil)
-		request.Header.Set("Authorization", token)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusUnauthorized {
-			t.Fatalf("token %q status=%d, want %d", token, response.Code, http.StatusUnauthorized)
-		}
+	password, _ := passwordHash("password-123")
+	user, _, err := store.CreatePendingUser(context.Background(), "admin@example.com", password, "demo")
+	if err != nil {
+		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/provider-connections", nil)
-	request.Header.Set("Authorization", "Bearer admin-token")
+	if _, err = store.exec(context.Background(), `UPDATE users SET email_verified_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), user.ID); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo"}).Handler(http.NotFoundHandler())
+	login := httptest.NewRequest(http.MethodPost, "http://example.com/api/auth/login", bytes.NewBufferString(`{"email":"admin@example.com","password":"password-123"}`))
+	login.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, login)
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	cookie := response.Result().Cookies()[0]
+	request := httptest.NewRequest(http.MethodGet, "http://example.com/api/provider-connections", nil)
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("valid token status=%d body=%s", response.Code, response.Body.String())
+		t.Fatalf("session status=%d body=%s", response.Code, response.Body.String())
+	}
+	bearer := httptest.NewRequest(http.MethodGet, "/api/provider-connections", nil)
+	bearer.Header.Set("Authorization", "Bearer password-123")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, bearer)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("bearer status=%d", response.Code)
 	}
 }
 

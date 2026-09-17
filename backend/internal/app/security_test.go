@@ -56,12 +56,12 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := store.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var migrations int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrations); err != nil {
+	var migrationCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 1 {
-		t.Fatalf("migrations=%d, want 1", migrations)
+	if migrationCount != len(migrations) {
+		t.Fatalf("migrations=%d, want %d", migrationCount, len(migrations))
 	}
 }
 

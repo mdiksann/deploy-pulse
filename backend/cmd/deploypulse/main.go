@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -14,9 +12,6 @@ import (
 
 	"deploypulse/internal/app"
 )
-
-//go:embed web/*
-var web embed.FS
 
 func main() {
 	role := env("ROLE", "api")
@@ -49,6 +44,7 @@ func main() {
 	if err := service.ValidateConfig(); err != nil {
 		log.Fatal(err)
 	}
+	frontendOrigins := env("FRONTEND_ORIGINS", "http://localhost:3000")
 	queue, err := app.OpenRedisStream(os.Getenv("REDIS_URL"))
 	if err != nil {
 		log.Fatal("REDIS_URL is required for api and worker: ", err)
@@ -65,17 +61,13 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	static, err := fs.Sub(web, "web")
-	if err != nil {
-		log.Fatal(err)
-	}
 	server := &http.Server{
 		Addr:              env("ADDR", ":8080"),
-		Handler:           app.NewServerWithConfig(service, store, queue, app.ServerConfig{DefaultWorkspaceID: env("DEFAULT_WORKSPACE_ID", "demo"), AdminAPIToken: os.Getenv("ADMIN_API_TOKEN")}).Handler(http.FileServer(http.FS(static))),
+		Handler:           app.NewServerWithConfig(service, store, queue, app.ServerConfig{DefaultWorkspaceID: env("DEFAULT_WORKSPACE_ID", "demo"), Production: production, FrontendOrigins: splitNonEmpty(frontendOrigins), APIPublicURL: env("API_PUBLIC_URL", "http://localhost:8080")}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		log.Printf("Deploy Pulse API listening on http://localhost%s", server.Addr)
+		log.Printf("Deploy Pulse API listening on %s", env("API_PUBLIC_URL", "http://localhost"+server.Addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
@@ -110,4 +102,15 @@ func split(value string) []string {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts
+}
+
+func splitNonEmpty(value string) []string {
+	parts := split(value)
+	filtered := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	return filtered
 }

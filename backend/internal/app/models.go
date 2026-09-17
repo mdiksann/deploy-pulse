@@ -89,6 +89,15 @@ type ProviderConnection struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type User struct {
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	Role            string     `json:"role"`
+	WorkspaceID     string     `json:"workspace_id"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
 type ListFilter struct {
 	Repository  string
 	Branch      string
@@ -96,8 +105,29 @@ type ListFilter struct {
 	Provider    string
 	Status      string
 	Actor       string
+	Query       string
 	Start       time.Time
 	End         time.Time
 	Cursor      string
 	Limit       int
+}
+
+type AnalyticsDay struct {
+	Date    string `json:"date"`
+	Total   int    `json:"total"`
+	Success int    `json:"success"`
+	Failed  int    `json:"failed"`
+	Other   int    `json:"other"`
+}
+
+type AnalyticsSummary struct {
+	Total       int     `json:"total"`
+	Success     int     `json:"success"`
+	Failed      int     `json:"failed"`
+	SuccessRate float64 `json:"success_rate"`
+}
+
+type DeploymentAnalytics struct {
+	Days    []AnalyticsDay   `json:"days"`
+	Summary AnalyticsSummary `json:"summary"`
 }
