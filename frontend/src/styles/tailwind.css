@@ -1,0 +1,4 @@
+/* Tailwind utilities for shadcn-compatible components. Preflight stays off so
+   the existing Deploy Pulse CSS remains the source of truth for global styles. */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
