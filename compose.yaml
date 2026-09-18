@@ -66,17 +66,6 @@ services:
       timeout: 3s
       retries: 6
 
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_BASE_URL: ${API_PUBLIC_URL:-http://localhost:8080}
-    ports:
-      - "3000:80"
-    depends_on:
-      api:
-        condition: service_healthy
-
   worker:
     build: ./backend
     command: ["worker"]
