@@ -1,0 +1,472 @@
+/* Shared visual language: monochrome release operations / technical terminal. */
+:root {
+  color-scheme: dark;
+  --bg-void: #050505;
+  --bg-canvas: #050505;
+  --bg-surface: #0b0b0b;
+  --bg-surface-glass: #0b0b0b;
+  --bg-surface-solid: #101010;
+  --bg-raised: #161616;
+  --bg-highlight: #1d1d1d;
+  --canvas: #050505;
+  --sidebar: #080808;
+  --surface: #0b0b0b;
+  --surface-raised: #111111;
+  --surface-hover: #191919;
+  --line: rgba(255, 255, 255, 0.22);
+  --line-soft: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.55);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-glass: rgba(255, 255, 255, 0.22);
+  --border-strong: rgba(255, 255, 255, 0.55);
+  --text: #f2f2f2;
+  --text-pure: #ffffff;
+  --text-high: #f2f2f2;
+  --text-muted: #a1a1a1;
+  --muted: #a1a1a1;
+  --text-dim: #707070;
+  --dim: #707070;
+  --blue: #f2f2f2;
+  --cyan: #f2f2f2;
+  --accent-cyan: #f2f2f2;
+  --accent-aqua: #d8d8d8;
+  --accent-sky: #c8c8c8;
+  --accent-teal: #bdbdbd;
+  --accent-ice: #ffffff;
+  --accent-crimson: #ffffff;
+  --accent-emerald: #d0d0d0;
+  --green: #d0d0d0;
+  --red: #ffffff;
+  --amber: #c0c0c0;
+  --queued: #bdbdbd;
+  --focus: #ffffff;
+  --radius: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --shadow: none;
+  --shadow-glass: none;
+  --shadow-cyan-glow: none;
+  --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --sans: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --font-sans: var(--mono);
+  --font-display: var(--mono);
+}
+
+html,
+body {
+  background: #050505;
+  color: #f2f2f2;
+}
+
+body {
+  font-family: var(--mono);
+}
+
+.deploy-pulse-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  color: #ffffff;
+  font-family: "Plus Jakarta Sans", Arial, sans-serif;
+  font-size: 1.05rem;
+  font-style: normal;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.deploy-pulse-logo .brand-mark,
+.deploy-pulse-glyph {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  align-items: end;
+  gap: 2px;
+  width: 18px;
+  height: 18px;
+}
+
+.deploy-pulse-logo .brand-mark i,
+.deploy-pulse-glyph i {
+  display: block;
+  width: 4px;
+  border-radius: 1px;
+  background: #38bdf8 !important;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+.deploy-pulse-logo .brand-mark i:nth-child(1),
+.deploy-pulse-glyph i:nth-child(1) { height: 7px; opacity: .6; }
+.deploy-pulse-logo .brand-mark i:nth-child(2),
+.deploy-pulse-glyph i:nth-child(2) { height: 12px; opacity: .8; }
+.deploy-pulse-logo .brand-mark i:nth-child(3),
+.deploy-pulse-glyph i:nth-child(3) { height: 17px; }
+
+.deploy-pulse-wordmark {
+  display: inline-flex;
+  color: #ffffff !important;
+  font-family: "Plus Jakarta Sans", Arial, sans-serif;
+  font-size: 1em;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  text-transform: uppercase;
+}
+
+.deploy-pulse-wordmark > span {
+  color: #ffffff !important;
+}
+
+.deploy-pulse-wordmark strong {
+  color: #9b9b9b !important;
+  font-weight: 700;
+}
+
+.auth-console-brand .deploy-pulse-logo {
+  font-size: 1.35rem;
+}
+
+.landing-footer .deploy-pulse-logo {
+  font-size: 1rem;
+}
+
+.brand > .brand-mark {
+  display: grid;
+}
+
+.brand > span:last-child {
+  color: #ffffff !important;
+  font-family: "Plus Jakarta Sans", Arial, sans-serif;
+  font-size: 1rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  text-transform: lowercase;
+  transform: none;
+}
+
+.brand > span:last-child span {
+  color: #38bdf8 !important;
+}
+
+.brand > .deploy-pulse-logo {
+  display: inline-flex;
+  color: #ffffff !important;
+  font-size: 1rem;
+  letter-spacing: normal;
+  text-transform: none;
+  transform: none;
+}
+
+:focus-visible {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 3px;
+}
+
+/* Landing page */
+.landing-page.ascii-ops-theme {
+  background: #050505;
+  color: #f2f2f2;
+}
+
+.landing-page.ascii-ops-theme .bento-insights-section,
+  .landing-page.ascii-ops-theme .product-section,
+.landing-page.ascii-ops-theme .workflow-section,
+.landing-page.ascii-ops-theme .security-section,
+.landing-page.ascii-ops-theme .final-cta,
+.landing-page.ascii-ops-theme .landing-footer {
+  background: #050505 !important;
+}
+
+.landing-page.ascii-ops-theme .bento-card,
+.landing-page.ascii-ops-theme .release-example,
+.landing-page.ascii-ops-theme .workflow-step-card,
+.landing-page.ascii-ops-theme .security-spec-card,
+.landing-page.ascii-ops-theme .metric-box,
+.landing-page.ascii-ops-theme .example-check,
+.landing-page.ascii-ops-theme .cta-container,
+  .landing-page.ascii-ops-theme .glass-tag,
+.landing-page.ascii-ops-theme .mini-action-pill,
+.landing-page.ascii-ops-theme .metric-pill-item,
+.landing-page.ascii-ops-theme .capsule-chart-container,
+.landing-page.ascii-ops-theme .terminal-excerpt-wrapper,
+.landing-page.ascii-ops-theme .story-note {
+  background: #0b0b0b !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .bento-card:hover,
+.landing-page.ascii-ops-theme .workflow-step-card:hover {
+  border-color: #ffffff !important;
+  box-shadow: none !important;
+  transform: translateY(-2px);
+}
+
+.landing-page.ascii-ops-theme h2,
+.landing-page.ascii-ops-theme h3,
+.landing-page.ascii-ops-theme strong,
+.landing-page.ascii-ops-theme .text-pure,
+.landing-page.ascii-ops-theme .text-high,
+.landing-page.ascii-ops-theme .accent-cyan,
+.landing-page.ascii-ops-theme .tag-cyan,
+.landing-page.ascii-ops-theme .card-eyebrow,
+.landing-page.ascii-ops-theme .sec-tag,
+.landing-page.ascii-ops-theme .story-badge,
+.landing-page.ascii-ops-theme .section-index-num,
+.landing-page.ascii-ops-theme .cta-eyebrow,
+.landing-page.ascii-ops-theme .col-title,
+.landing-page.ascii-ops-theme .footer-version,
+.landing-page.ascii-ops-theme .fig-title {
+  color: #f2f2f2 !important;
+  text-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme p,
+.landing-page.ascii-ops-theme span,
+.landing-page.ascii-ops-theme dd,
+.landing-page.ascii-ops-theme .footer-motto,
+.landing-page.ascii-ops-theme .footer-col a {
+  text-shadow: none;
+}
+
+.landing-page.ascii-ops-theme .pill-btn,
+.landing-page.ascii-ops-theme .pill-btn-cyan-glow,
+.landing-page.ascii-ops-theme .pill-btn-cyan-sm,
+.landing-page.ascii-ops-theme .landing-cta-pill,
+.landing-page.ascii-ops-theme .step-nav-btn {
+  color: #f2f2f2 !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .pill-btn:hover,
+.landing-page.ascii-ops-theme .landing-cta-pill:hover,
+.landing-page.ascii-ops-theme .step-nav-btn:hover,
+.landing-page.ascii-ops-theme .step-nav-btn.active {
+  color: #050505 !important;
+  background: #f2f2f2 !important;
+  border-color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .top-bar-fill,
+.landing-page.ascii-ops-theme .capsule-fill,
+.landing-page.ascii-ops-theme .topology-bar-item.active .top-bar-fill {
+  background: #f2f2f2 !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .horizon-arc-glow,
+.landing-page.ascii-ops-theme .horizon-ambient-aura,
+.landing-page.ascii-ops-theme .horizon-rim-light,
+.landing-page.ascii-ops-theme .horizon-inner-curvature,
+.landing-page.ascii-ops-theme .gauge-glow-aura {
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .stream-visualizer-container,
+.landing-page.ascii-ops-theme .stream-hud-bar,
+.landing-page.ascii-ops-theme .stream-event-card,
+.landing-page.ascii-ops-theme .capsule-track,
+.landing-page.ascii-ops-theme .capsule-hud-detail,
+.landing-page.ascii-ops-theme .terminal-bar {
+  background: #0b0b0b !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .event-status-pip,
+.landing-page.ascii-ops-theme .event-hmac-badge,
+.landing-page.ascii-ops-theme .event-time-badge,
+.landing-page.ascii-ops-theme .hud-tag-verified,
+.landing-page.ascii-ops-theme .pill-stripe,
+.landing-page.ascii-ops-theme .capsule-cap,
+.landing-page.ascii-ops-theme .capsule-base-dot,
+.landing-page.ascii-ops-theme .pulse-indicator {
+  color: #f2f2f2 !important;
+  background: #f2f2f2 !important;
+  border-color: #f2f2f2 !important;
+  box-shadow: none !important;
+}
+
+.landing-page.ascii-ops-theme .landing-footer {
+  border-top-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+/* Auth pages */
+.auth-shell {
+  background: #050505 !important;
+  font-family: var(--mono) !important;
+}
+
+.auth-shell::before {
+  opacity: 0.28 !important;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px) !important;
+}
+
+.auth-visual {
+  background: #0a0a0a !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+.auth-card {
+  background: #0b0b0b !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.auth-visual-copy h2,
+.auth-card h1,
+.auth-console-brand {
+  font-family: var(--mono) !important;
+  letter-spacing: 0.02em !important;
+}
+
+.auth-card .section-note,
+.auth-back:hover,
+.auth-footer a,
+.auth-card .section-note {
+  color: #f2f2f2 !important;
+  text-shadow: none !important;
+}
+
+.auth-field input,
+.auth-admin input,
+.auth-admin select {
+  background: #050505 !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  border-radius: 0 !important;
+}
+
+.auth-field input:focus,
+.auth-field input:focus-visible {
+  border-color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.auth-submit,
+.secondary-button.auth-submit {
+  color: #050505 !important;
+  background: #f2f2f2 !important;
+  border: 1px solid #ffffff !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.secondary-button.auth-submit {
+  color: #f2f2f2 !important;
+  background: transparent !important;
+}
+
+/* Console/dashboard */
+.app-shell,
+.sidebar,
+.topbar,
+.deployment-dialog,
+.admin-panel,
+.table-frame,
+.failure-rail,
+.pulse-panel,
+.quiet-panel,
+.health-strip {
+  background: #0b0b0b !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.sidebar {
+  background: #070707 !important;
+}
+
+.topbar {
+  backdrop-filter: none !important;
+}
+
+.brand > span:last-child span,
+.brand-mark i,
+.section-note,
+.nav-link.active svg,
+.incident-cta,
+.icon-button:hover,
+.deployment-name button:hover,
+.reprocess-button,
+.dialog-section h3,
+.toast {
+  color: #f2f2f2 !important;
+}
+
+.brand-mark i,
+.live-dot,
+.status-dot.success,
+.chart-legend i,
+.chart-bars span,
+.avatar,
+.primary-button,
+.load-more {
+  background: #f2f2f2 !important;
+  box-shadow: none !important;
+}
+
+.workspace-switcher,
+.icon-button,
+.nav-link.active,
+.scope-controls select,
+.table-tools select,
+.search-field input,
+.admin-panel input,
+.admin-panel select,
+.compact-item,
+.dead-letter-item,
+.reprocess-button,
+.dialog-close,
+.toast {
+  background: #050505 !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.nav-link.active,
+.reprocess-button {
+  color: #f2f2f2 !important;
+  border-color: #ffffff !important;
+}
+
+.primary-button,
+.load-more {
+  color: #050505 !important;
+  border: 1px solid #ffffff !important;
+  border-radius: 0 !important;
+}
+
+.avatar {
+  color: #050505 !important;
+  border-radius: 0 !important;
+}
+
+.deployment-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.82) !important;
+  backdrop-filter: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
