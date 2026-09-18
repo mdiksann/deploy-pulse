@@ -2,15 +2,20 @@
 
 Deploy Pulse ingests signed deployment webhooks, stores the raw event durably, then processes it through Redis Streams into a sanitized deployment timeline. PostgreSQL is the production store; SQLite is retained for local development and tests.
 
-## Services and local production run
+## Services and local development run
 
 ```bash
 cp .env.compose.example .env
 # Replace every change-me value with a unique secret.
-docker compose up --build
+docker compose up -d --build postgres redis migrate api worker
+
+# In another terminal
+cd frontend
+npm install
+npm run dev
 ```
 
-The frontend is at [http://localhost:3000](http://localhost:3000); the API is at [http://localhost:8080](http://localhost:8080). Compose starts PostgreSQL and Redis first, runs idempotent migrations, then starts the API, worker, and Nginx frontend. Check API liveness with `/healthz` and dependency readiness with `/readyz`.
+The frontend runs through Vite at [http://localhost:3000](http://localhost:3000); the API is at [http://localhost:8080](http://localhost:8080). Vite proxies `/api`, `/healthz`, `/readyz`, and `/webhooks` to the API, so frontend requests stay same-origin during development. Compose starts PostgreSQL and Redis first, runs idempotent migrations, then starts the API and worker. Check API liveness with `/healthz` and dependency readiness with `/readyz`.
 
 The runtime roles are separate:
 
@@ -89,7 +94,7 @@ cd ..
 docker compose config
 ```
 
-The Vite client reads `VITE_API_BASE_URL`; local Compose passes `http://localhost:8080` automatically. For a separate production deployment, build the frontend with `VITE_API_BASE_URL=https://api.example.com` and configure the API allowlist with `FRONTEND_ORIGINS=https://app.example.com`.
+The Vite client reads `VITE_API_BASE_URL` when set; otherwise the dev server proxies requests to `http://localhost:8080`. For a separate production deployment, build the frontend with `VITE_API_BASE_URL=https://api.example.com` and configure the API allowlist with `FRONTEND_ORIGINS=https://app.example.com`.
 
 Run the included local load check after Compose is healthy:
 
