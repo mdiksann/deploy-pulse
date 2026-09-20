@@ -14,6 +14,44 @@ beforeEach(() => {
 });
 
 describe("authentication flow", () => {
+  it("opens the account menu, shows profile details, and logs out", async () => {
+    window.history.pushState({}, "", "/app");
+    fetch.mockImplementation(async (path) => response(200, path === "/api/auth/me"
+      ? { user: { email: "ops@example.com", role: "admin", workspace_id: "default", created_at: "2026-01-10T00:00:00Z" } }
+      : {}));
+    render(<App/>);
+    const trigger = await screen.findByRole("button", { name: "Account menu" });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(fetch).not.toHaveBeenCalledWith("/api/auth/logout", expect.anything());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("link", { name: "Profile" }));
+    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/app/profile");
+    expect(screen.getByText("ops@example.com")).toBeInTheDocument();
+    expect(screen.getByText("admin")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    fetch.mockImplementationOnce(async () => response(500, { error: "Unable to log out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to log out");
+    expect(window.location.pathname).toBe("/app/profile");
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(await screen.findByRole("heading", { name: /sign in to release watch/i })).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("guards the profile page for signed-out users", async () => {
+    window.history.pushState({}, "", "/app/profile");
+    render(<App/>);
+    expect(await screen.findByRole("heading", { name: /sign in to release watch/i })).toBeInTheDocument();
+  });
+
   it("shows login and redirects after successful login", async () => {
     render(<App/>);
     await screen.findByRole("heading", { name: /sign in to release watch/i });
