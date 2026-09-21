@@ -14,6 +14,33 @@ beforeEach(() => {
 });
 
 describe("authentication flow", () => {
+  it("uses separate app routes and toggles the sidebar rail", async () => {
+    window.history.pushState({}, "", "/app");
+    fetch.mockImplementation(async (path) => response(200, path === "/api/auth/me"
+      ? { user: { email: "ops@example.com" } }
+      : {}));
+    render(<App/>);
+
+    expect(await screen.findByRole("heading", { name: /release activity is stable/i })).toBeInTheDocument();
+    const shell = document.querySelector(".app-shell");
+    fireEvent.click(screen.getByRole("button", { name: "Minimize sidebar" }));
+    expect(shell).toHaveClass("sidebar-collapsed");
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByRole("link", { name: "Deployments" }));
+    expect(window.location.pathname).toBe("/app/deployments");
+    expect(await screen.findByRole("heading", { name: /every release/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Deployments" })).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(screen.getByRole("link", { name: "Alerts" }));
+    expect(window.location.pathname).toBe("/app/alerts");
+    expect(await screen.findByRole("heading", { name: /route failures/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Connections" }));
+    expect(window.location.pathname).toBe("/app/connections");
+    expect(await screen.findByRole("heading", { name: /connect your release sources/i })).toBeInTheDocument();
+  });
+
   it("opens the account menu, shows profile details, and logs out", async () => {
     window.history.pushState({}, "", "/app");
     fetch.mockImplementation(async (path) => response(200, path === "/api/auth/me"
