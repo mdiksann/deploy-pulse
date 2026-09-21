@@ -3,62 +3,127 @@ import "./styles/auth.css";
 import "./styles/landing.css";
 import "./styles/tailwind.css";
 import "./styles/ascii-theme.css";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import { AuthProvider, useAuth } from "./auth";
-import { DeployPulseLogo, StatusDot, TerminalBadge } from "./components/ui";
-import { LandingPage } from "./pages/LandingPage";
-import ProfileMenu from "./components/ProfileMenu";
-import ProfilePage from "./pages/ProfilePage";
+import { DeployPulseLogo } from "./components/ui";
 import DemoOne from "./components/ui/demo";
 import SonarGridDemo from "./components/ui/sonar-grid-demo";
+import DashboardPage from "./pages/DashboardPage";
+import { LandingPage } from "./pages/LandingPage";
+import ProfilePage from "./pages/ProfilePage";
 
-const providers = { github: "GitHub Actions", gitlab: "GitLab CI", circleci: "CircleCI", vercel: "Vercel", netlify: "Netlify", "aws-codepipeline": "AWS CodePipeline" };
-const pretty = (value = "") => value.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-const ago = (value) => { const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000)); return minutes < 2 ? "just now" : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1440)}d ago`; };
-
-function Field({ label, error, ...props }) { const id = props.id || props.name; return <label className="auth-field" htmlFor={id}><span>{label}</span><input id={id} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} {...props} />{error && <small id={`${id}-error`} className="field-error">{error}</small>}</label>; }
-function AuthLayout({ eyebrow, title, copy, children }) {
-  return <main className="auth-shell"><aside className="auth-visual">
-    <Link className="auth-console-brand" to="/"><DeployPulseLogo /></Link>
-    <div className="auth-visual-copy"><h2>A clearer view of what shipped.</h2><p>Follow your deployments, investigate failed checks, and keep your team informed.</p></div>
-    <p className="auth-visual-status">GitHub Actions, GitLab CI, CircleCI, Vercel, Netlify, and AWS CodePipeline.</p>
-  </aside><section className="auth-card"><Link className="auth-back" to="/">Back to Deploy Pulse</Link><p className="section-note">{eyebrow}</p><h1>{title}</h1><p className="auth-copy">{copy}</p>{children}</section></main>;
+function Field({ label, error, ...props }) {
+  const id = props.id || props.name;
+  return <label className="auth-field" htmlFor={id}>
+    <span>{label}</span>
+    <input id={id} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} {...props} />
+    {error && <small id={`${id}-error`} className="field-error">{error}</small>}
+  </label>;
 }
-function useFormState() { const [error, setError] = useState(""), [busy, setBusy] = useState(false); return { error, setError, busy, setBusy }; }
+
+function AuthLayout({ eyebrow, title, copy, children }) {
+  return <main className="auth-shell">
+    <aside className="auth-visual">
+      <Link className="auth-console-brand" to="/"><DeployPulseLogo /></Link>
+      <div className="auth-visual-copy"><h2>A clearer view of what shipped.</h2><p>Follow your deployments, investigate failed checks, and keep your team informed.</p></div>
+      <p className="auth-visual-status">GitHub Actions, GitLab CI, CircleCI, Vercel, Netlify, and AWS CodePipeline.</p>
+    </aside>
+    <section className="auth-card"><Link className="auth-back" to="/">Back to Deploy Pulse</Link><p className="section-note">{eyebrow}</p><h1>{title}</h1><p className="auth-copy">{copy}</p>{children}</section>
+  </main>;
+}
+
+function useFormState() {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  return { error, setError, busy, setBusy };
+}
 
 function LoginPage() {
-  const { user, setUser } = useAuth(), nav = useNavigate(), form = useFormState(), [fields, setFields] = useState({ email: "", password: "" });
+  const { user, setUser } = useAuth();
+  const navigate = useNavigate();
+  const form = useFormState();
+  const [fields, setFields] = useState({ email: "", password: "" });
   if (user) return <Navigate to="/app" replace />;
-  async function submit(event) { event.preventDefault(); form.setError(""); if (!fields.email || !fields.password) return form.setError("Enter your email and password."); form.setBusy(true); try { const data = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fields) }); setUser(data.user); nav("/app", { replace: true }); } catch (error) { form.setError(error.message); } finally { form.setBusy(false); } }
-  return <AuthLayout eyebrow="Welcome back" title="Sign in to release watch." copy="Track deployment health and operate your workspace from one quiet control room."><form className="auth-form" onSubmit={submit} noValidate><div className="form-error" role="alert" aria-live="polite">{form.error}</div><Field label="Email" type="email" name="email" autoComplete="email" value={fields.email} onChange={(e) => setFields({ ...fields, email: e.target.value })}/><Field label="Password" type="password" name="password" autoComplete="current-password" value={fields.password} onChange={(e) => setFields({ ...fields, password: e.target.value })}/><button className="primary-button auth-submit" disabled={form.busy}>{form.busy ? "Signing in…" : "Sign in"}</button></form><p className="auth-footer">Need an account? <Link to="/signup">Create one</Link></p></AuthLayout>;
+
+  async function submit(event) {
+    event.preventDefault();
+    form.setError("");
+    if (!fields.email || !fields.password) return form.setError("Enter your email and password.");
+    form.setBusy(true);
+    try {
+      const data = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fields) });
+      setUser(data.user);
+      navigate("/app", { replace: true });
+    } catch (error) { form.setError(error.message); }
+    finally { form.setBusy(false); }
+  }
+
+  return <AuthLayout eyebrow="Welcome back" title="Sign in to release watch." copy="Track deployment health and operate your workspace from one quiet control room.">
+    <form className="auth-form" onSubmit={submit} noValidate>
+      <div className="form-error" role="alert" aria-live="polite">{form.error}</div>
+      <Field label="Email" type="email" name="email" autoComplete="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} />
+      <Field label="Password" type="password" name="password" autoComplete="current-password" value={fields.password} onChange={(event) => setFields({ ...fields, password: event.target.value })} />
+      <button className="primary-button auth-submit" disabled={form.busy}>{form.busy ? "Signing in…" : "Sign in"}</button>
+    </form>
+    <p className="auth-footer">Need an account? <Link to="/signup">Create one</Link></p>
+  </AuthLayout>;
 }
 
 function SignupPage() {
-  const { user } = useAuth(), nav = useNavigate(), form = useFormState(), [fields, setFields] = useState({ email: "", password: "", confirm: "" }), [created, setCreated] = useState(false);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const form = useFormState();
+  const [fields, setFields] = useState({ email: "", password: "", confirm: "" });
+  const [created, setCreated] = useState(false);
   if (user) return <Navigate to="/app" replace />;
-  async function submit(event) { event.preventDefault(); form.setError(""); if (!fields.email || fields.password.length < 8) return form.setError("Use a valid email and a password of at least 8 characters."); if (fields.password !== fields.confirm) return form.setError("Passwords do not match."); form.setBusy(true); try { await api("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: fields.email, password: fields.password }) }); setCreated(true); } catch (error) { form.setError(error.message); } finally { form.setBusy(false); } }
-  if (created) return <AuthLayout eyebrow="Account ready" title="You can sign in now." copy="Your Deploy Pulse workspace is ready. No email verification is required."><button className="secondary-button auth-submit" onClick={() => nav("/login")}>Continue to sign in</button></AuthLayout>;
-  return <AuthLayout eyebrow="Create account" title="Keep every release in view." copy="Create an account and start operating your deployment workspace immediately."><form className="auth-form" onSubmit={submit} noValidate><div className="form-error" role="alert">{form.error}</div><Field label="Email" type="email" name="email" autoComplete="email" value={fields.email} onChange={(e) => setFields({ ...fields, email: e.target.value })}/><Field label="Password" type="password" name="password" autoComplete="new-password" minLength="8" value={fields.password} onChange={(e) => setFields({ ...fields, password: e.target.value })}/><Field label="Confirm password" type="password" name="confirm" autoComplete="new-password" value={fields.confirm} onChange={(e) => setFields({ ...fields, confirm: e.target.value })}/><button className="primary-button auth-submit" disabled={form.busy}>{form.busy ? "Creating account…" : "Create account"}</button></form><p className="auth-footer">Already have an account? <Link to="/login">Sign in</Link></p></AuthLayout>;
-}
-function Guard({ children }) { const { user, loading } = useAuth(); if (loading) return <main className="auth-shell"><div className="auth-card">Loading session…</div></main>; return user ? children : <Navigate to="/login" replace/>; }
-function IconButton({ label, onClick }) { return <button className="icon-button" aria-label={label} onClick={onClick}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.8-4L4 9m0-5v5h5M4 13a8 8 0 0 0 14.8 4L20 15m0 5v-5h-5"/></svg></button>; }
-function Status({ value }) { return <TerminalBadge tone={value}>{pretty(value)}</TerminalBadge>; }
 
-function Dashboard() {
-  const [deployments, setDeployments] = useState([]), [nextCursor, setNextCursor] = useState(""), [analytics, setAnalytics] = useState(null), [health, setHealth] = useState(null), [rules, setRules] = useState([]), [connections, setConnections] = useState([]), [deadLetters, setDeadLetters] = useState([]);
-  const [filters, setFilters] = useState({ environment: "", status: "", q: "", days: 1 }), [error, setError] = useState(""), [busy, setBusy] = useState(false), [selected, setSelected] = useState(null), [toast, setToast] = useState("");
-  const load = async (append = false) => { setBusy(true); setError(""); const q = new URLSearchParams({ limit: "50" }); if (filters.environment) q.set("environment", filters.environment); if (filters.status) q.set("status", filters.status); if (filters.q) q.set("q", filters.q); q.set("start", new Date(Date.now() - filters.days * 86400000).toISOString()); if (append && nextCursor) q.set("cursor", nextCursor); const results = await Promise.allSettled([api(`/api/deployments?${q}`), api(`/api/analytics/deployments?days=${filters.days}${filters.environment ? `&environment=${encodeURIComponent(filters.environment)}` : ""}`), api("/api/health")]); if (results[0].status === "fulfilled") { setDeployments((current) => append ? [...current, ...(results[0].value.items || [])] : (results[0].value.items || [])); setNextCursor(results[0].value.next_cursor || ""); } if (results[1].status === "fulfilled") setAnalytics(results[1].value); if (results[2].status === "fulfilled") setHealth(results[2].value); const failedRequest = results.find((result) => result.status === "rejected"); if (failedRequest) setError(failedRequest.reason.message); setBusy(false); };
-  const loadAdmin = async () => { try { const [r, c, d] = await Promise.all([api("/api/notification-rules"), api("/api/provider-connections"), api("/api/dead-letter-events")]); setRules(r.items || []); setConnections(c.items || []); setDeadLetters(d.items || []); } catch (e) { setToast(e.message); } };
-  useEffect(() => { load(); loadAdmin(); }, [filters.environment, filters.status, filters.days, filters.q]);
-  const openDetail = async (deployment) => { try { setSelected(await api(`/api/deployments/${encodeURIComponent(deployment.id)}`)); } catch (e) { setToast(e.message); } };
-  const failed = deployments.filter((d) => d.status === "failed"), summary = analytics?.summary || {}, refresh = () => Promise.all([load(), loadAdmin()]).then(() => setToast("Dashboard refreshed."));
-  return <div className="app-shell"><aside className="sidebar"><Link className="brand" to="/app"><DeployPulseLogo /></Link><nav className="nav-list"><a className="nav-link active" href="#overview">Overview</a><a className="nav-link" href="#deployments">Deployments</a><a className="nav-link" href="#alerts">Alerts</a><a className="nav-link" href="#connections">Connections</a></nav><div className="sidebar-bottom"><p><span className={`status-dot ${health?.status === "ok" ? "success" : "muted"}`}/>{health?.status === "ok" ? "All systems reporting" : "Checking runtime health"}</p></div></aside><section className="page-shell"><header className="topbar"><div className="crumb"><span className="live-dot"/>Live workspace <span className="slash">/</span><strong>Release watch</strong></div><div className="top-actions"><span className="sync-status">{busy ? "Syncing" : "Updated"}</span><IconButton label="Refresh dashboard" onClick={refresh}/><ProfileMenu/></div></header><main id="main"><section className="intro" id="overview"><div><p className="section-note">Release watch</p><h1>{failed.length ? `${failed.length} deployment${failed.length === 1 ? " needs" : "s need"} attention.` : "Release activity is stable."}</h1><p className="intro-copy">{summary.total || 0} deployments in the selected window · {Number(summary.success_rate || 0).toFixed(1)}% success rate.</p></div><div className="scope-controls"><label>Environment<select value={filters.environment} onChange={(e) => setFilters({ ...filters, environment: e.target.value })}><option value="">All environments</option><option value="production">Production</option><option value="staging">Staging</option></select></label><label>Range<select value={filters.days} onChange={(e) => setFilters({ ...filters, days: Number(e.target.value) })}><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label></div></section>{error && <div className="inline-error" role="alert">{error}<button onClick={() => load()}>Try again</button></div>}<section className="focus-grid"><article className="failure-rail"><div className="panel-heading"><div><p className="section-note">Needs attention</p><h2>Failure rail</h2></div><span className="failure-number">{String(failed.length).padStart(2, "0")}</span></div><div className="rail-list">{failed.length ? failed.slice(0, 3).map((d) => <button className="incident-row" key={d.id} onClick={() => openDetail(d)}><span className="incident-time"><i/>{ago(d.started_at)}</span><span className="incident-body"><span className="incident-title"><strong>{d.repository}</strong><code>{d.commit_sha?.slice(0, 7)}</code></span><p>{pretty(d.failure_category || "provider failure")} · {d.environment}</p></span><span className="incident-cta">Inspect →</span></button>) : <div className="empty-row">No failed deployments in this range.</div>}</div><div className="rail-footer">Failure count reflects the selected range.</div></article><article className="pulse-panel"><div className="panel-heading"><div><p className="section-note">Last {filters.days} day{filters.days === 1 ? "" : "s"}</p><h2>Deployment pulse</h2></div><span className="chart-legend"><i/>Successful releases <b>{summary.success || 0}</b></span></div><div className="chart" aria-label="Deployment trend"><div className="grid-line"/><div className="grid-line"/><div className="grid-line"/><div className="chart-bars">{(analytics?.days || []).map((day) => <span key={day.date} style={{ height: `${Math.max(4, (day.total / Math.max(1, summary.total || 1)) * 100)}%` }} title={`${day.date}: ${day.total} deployments`}/>)}</div></div><div className="chart-axis"><span>Earlier</span><span>Now</span></div></article></section><dl className="health-strip"><div><dt>API</dt><dd>{health?.api || "Checking"}</dd><small>service liveness</small></div><div><dt>Database</dt><dd>{health?.database || "Checking"}</dd><small>PostgreSQL readiness</small></div><div><dt>Queue</dt><dd>{health?.queue || "Checking"}</dd><small>Redis readiness</small></div><div><dt>Recovery queue</dt><dd>{health?.dead_letter_events ?? "—"}</dd><small>dead-letter events</small></div></dl><section className="deployment-section" id="deployments"><div className="section-header"><div><p className="section-note">Deployment history</p><h2>Recent releases</h2></div><p className="result-count">{deployments.length}{nextCursor ? "+" : ""} deployments</p></div><div className="table-tools"><label className="search-field">Search deployments<input type="search" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="Repository, provider, actor…"/></label><label>Status<select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">Every status</option><option value="failed">Failed</option><option value="running">Running</option><option value="queued">Queued</option><option value="success">Successful</option></select></label></div><div className="table-frame"><table><thead><tr><th>Deployment</th><th>Environment</th><th>Status</th><th>Duration</th><th>Started</th><th>Provider</th></tr></thead><tbody>{deployments.length ? deployments.map((d) => <tr key={d.id}><td><div className="deployment-name"><button onClick={() => openDetail(d)}>{d.repository}</button><span>{d.branch} · {d.commit_sha?.slice(0, 7)} · {d.actor}</span></div></td><td>{d.environment}</td><td><Status value={d.status}/></td><td>{d.duration || "in progress"}</td><td>{ago(d.started_at)}</td><td>{providers[d.provider] || d.provider}</td></tr>) : <tr><td colSpan="6"><div className="empty-row">{busy ? "Loading deployment history" : "No deployments match these filters."}</div></td></tr>}</tbody></table></div>{nextCursor && <div className="list-actions"><button className="load-more" disabled={busy} onClick={() => load(true)}>{busy ? "Loading…" : "Load more deployments"}</button></div>}</section><AdminPanel rules={rules} connections={connections} deadLetters={deadLetters} onReload={loadAdmin} onToast={setToast}/></main></section>{selected && <DetailDialog deployment={selected} onClose={() => setSelected(null)}/>} {toast && <div className="toast show" role="status">{toast}</div>}</div>;
+  async function submit(event) {
+    event.preventDefault();
+    form.setError("");
+    if (!fields.email || fields.password.length < 8) return form.setError("Use a valid email and a password of at least 8 characters.");
+    if (fields.password !== fields.confirm) return form.setError("Passwords do not match.");
+    form.setBusy(true);
+    try {
+      await api("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: fields.email, password: fields.password }) });
+      setCreated(true);
+    } catch (error) { form.setError(error.message); }
+    finally { form.setBusy(false); }
+  }
+
+  if (created) return <AuthLayout eyebrow="Account ready" title="You can sign in now." copy="Your Deploy Pulse workspace is ready. No email verification is required."><button className="secondary-button auth-submit" onClick={() => navigate("/login")}>Continue to sign in</button></AuthLayout>;
+
+  return <AuthLayout eyebrow="Create account" title="Keep every release in view." copy="Create an account and start operating your deployment workspace immediately.">
+    <form className="auth-form" onSubmit={submit} noValidate>
+      <div className="form-error" role="alert">{form.error}</div>
+      <Field label="Email" type="email" name="email" autoComplete="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} />
+      <Field label="Password" type="password" name="password" autoComplete="new-password" minLength="8" value={fields.password} onChange={(event) => setFields({ ...fields, password: event.target.value })} />
+      <Field label="Confirm password" type="password" name="confirm" autoComplete="new-password" value={fields.confirm} onChange={(event) => setFields({ ...fields, confirm: event.target.value })} />
+      <button className="primary-button auth-submit" disabled={form.busy}>{form.busy ? "Creating account…" : "Create account"}</button>
+    </form>
+    <p className="auth-footer">Already have an account? <Link to="/login">Sign in</Link></p>
+  </AuthLayout>;
 }
 
-function AdminPanel({ rules, connections, deadLetters, onReload, onToast }) { const [rule, setRule] = useState({ repository: "", environment: "", channel: "slack", target: "" }), [connection, setConnection] = useState({ provider: "github", name: "", secret: "" }); async function submitRule(e) { e.preventDefault(); try { await api("/api/notification-rules", { method: "POST", headers: { "Content-Type": "application/json", Origin: window.location.origin }, body: JSON.stringify({ ...rule, status: "failed" }) }); setRule({ repository: "", environment: "", channel: "slack", target: "" }); onToast("Notification rule created."); onReload(); } catch (e) { onToast(e.message); } } async function submitConnection(e) { e.preventDefault(); try { await api("/api/provider-connections", { method: "POST", headers: { "Content-Type": "application/json", Origin: window.location.origin }, body: JSON.stringify(connection) }); setConnection({ ...connection, name: "", secret: "" }); onToast("Provider connection saved."); onReload(); } catch (e) { onToast(e.message); } } return <section id="settings" className="admin-section"><div className="section-header"><div><p className="section-note">Runtime operations</p><h2>Administrative controls</h2></div><p className="result-count">{deadLetters.length} recovery events</p></div><div className="admin-grid"><article className="admin-panel dead-letter-panel"><h3>Dead-letter recovery</h3><p>Events that reached five attempts and need operator action.</p>{deadLetters.length ? deadLetters.map((item) => <div className="dead-letter-item" key={item.id}><span>{providers[item.provider] || item.provider}</span><span className="dead-letter-error">{item.error}</span><button className="reprocess-button" onClick={async () => { try { await api(`/api/dead-letter-events/${item.id}/reprocess`, { method: "POST", headers: { Origin: window.location.origin } }); onToast("Event queued for reprocessing."); onReload(); } catch (e) { onToast(e.message); } }}>Reprocess</button></div>) : <span className="admin-empty">Recovery queue is empty.</span>}</article><article id="alerts" className="admin-panel"><h3>Notification rules</h3><p>Send a failure alert for a repository and environment.</p><form onSubmit={submitRule}><input aria-label="Repository" placeholder="Repository" value={rule.repository} onChange={(e) => setRule({ ...rule, repository: e.target.value })}/><input aria-label="Environment" placeholder="Environment" value={rule.environment} onChange={(e) => setRule({ ...rule, environment: e.target.value })}/><select aria-label="Channel" value={rule.channel} onChange={(e) => setRule({ ...rule, channel: e.target.value })}><option>slack</option><option>email</option></select><input aria-label="Target" required placeholder="Target" value={rule.target} onChange={(e) => setRule({ ...rule, target: e.target.value })}/><button className="primary-button">Create rule</button></form><div className="compact-list">{rules.map((item) => <div className="compact-item" key={item.id}><strong>{item.repository} · {item.environment}</strong><span>{item.target}</span></div>)}</div></article><article id="connections" className="admin-panel"><h3>Provider connections</h3><p>Secrets are encrypted before they are written and never returned.</p><form onSubmit={submitConnection}><select aria-label="Provider" value={connection.provider} onChange={(e) => setConnection({ ...connection, provider: e.target.value })}>{Object.keys(providers).map((key) => <option key={key}>{key}</option>)}</select><input aria-label="Name" required placeholder="Connection name" value={connection.name} onChange={(e) => setConnection({ ...connection, name: e.target.value })}/><input aria-label="Secret" required type="password" autoComplete="new-password" placeholder="Provider secret" value={connection.secret} onChange={(e) => setConnection({ ...connection, secret: e.target.value })}/><button className="primary-button">Save connection</button></form><div className="compact-list">{connections.map((item) => <div className="compact-item" key={item.id}><strong>{providers[item.provider] || item.provider}</strong><span>{item.name}</span></div>)}</div></article></div></section>; }
-function DetailDialog({ deployment, onClose }) { const ref = useRef(null), previous = useRef(document.activeElement); useEffect(() => { ref.current?.showModal(); return () => { ref.current?.close(); previous.current?.focus?.(); }; }, []); return <dialog ref={ref} className="deployment-dialog" onCancel={(e) => { e.preventDefault(); onClose(); }}><div className="dialog-header"><div><p className="section-note">{providers[deployment.provider] || deployment.provider} deployment</p><h2>{deployment.repository}</h2></div><button className="dialog-close" aria-label="Close deployment details" onClick={onClose}>×</button></div><section className="dialog-section"><div className={deployment.status === "failed" ? "failure-summary" : "success-summary"}>{deployment.status === "failed" ? deployment.failure_summary || "Review deployment details" : `This deployment is ${pretty(deployment.status)}.`}</div></section><section className="dialog-section"><h3>Checks</h3>{deployment.checks?.length ? deployment.checks.map((check) => <div className="check" key={check.id}><span className={`check-mark ${check.status}`}>{check.status === "success" ? "✓" : "!"}</span><span className="check-name"><strong>{check.name}</strong><span>{check.summary}</span></span><time>{pretty(check.status)}</time></div>) : <p className="empty-logs">No checks were supplied by this provider.</p>}</section><section className="dialog-section"><h3>Sanitized log excerpt</h3><div className="log-viewer">{deployment.log_lines?.length ? deployment.log_lines.map((line, index) => <div className="log-line" key={index}><span>{index + 1}</span><code>{line}</code></div>) : <p className="empty-logs">No sanitized logs available.</p>}</div></section></dialog>; }
-export function App() { return <BrowserRouter><AuthProvider><Routes><Route path="/" element={<LandingPage/>}/><Route path="/hero-ascii" element={<DemoOne/>}/><Route path="/sonar-grid" element={<SonarGridDemo/>}/><Route path="/login" element={<LoginPage/>}/><Route path="/signup" element={<SignupPage/>}/><Route path="/app" element={<Guard><Dashboard/></Guard>}/><Route path="/app/profile" element={<Guard><ProfilePage/></Guard>}/><Route path="*" element={<Navigate to="/" replace/>}/></Routes></AuthProvider></BrowserRouter>; }
-if (document.getElementById("root")) createRoot(document.getElementById("root")).render(<App/>);
+function Guard({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <main className="auth-shell"><div className="auth-card">Loading session…</div></main>;
+  return user ? children : <Navigate to="/login" replace />;
+}
+
+export function App() {
+  return <BrowserRouter><AuthProvider><Routes>
+    <Route path="/" element={<LandingPage />} />
+    <Route path="/hero-ascii" element={<DemoOne />} />
+    <Route path="/sonar-grid" element={<SonarGridDemo />} />
+    <Route path="/login" element={<LoginPage />} />
+    <Route path="/signup" element={<SignupPage />} />
+    <Route path="/app/profile" element={<Guard><ProfilePage /></Guard>} />
+    <Route path="/app/*" element={<Guard><DashboardPage /></Guard>} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes></AuthProvider></BrowserRouter>;
+}
+
+if (document.getElementById("root")) createRoot(document.getElementById("root")).render(<App />);
