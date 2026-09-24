@@ -178,7 +178,7 @@ function AlertsPage({ deadLetters, onReload, onToast, rules }) {
   </>;
 }
 
-function ConnectionsPage({ connections, onReload, onToast }) {
+function ConnectionsPage({ connections, onReload, onToast, webhookBaseURL, workspaceID }) {
   const [connection, setConnection] = useState({ provider: "github", name: "", secret: "" });
   async function submitConnection(event) {
     event.preventDefault();
@@ -192,7 +192,7 @@ function ConnectionsPage({ connections, onReload, onToast }) {
   return <>
     <section className="intro"><div><p className="section-note">Provider setup</p><h1>Connect your release sources.</h1><p className="intro-copy">Provider secrets are encrypted before storage and are never returned by the API.</p></div></section>
     <section className="admin-grid connections-grid">
-      <article className="admin-panel"><h2>New connection</h2><p>Add a provider credential to start receiving deployment events.</p><form onSubmit={submitConnection}><label>Provider<select value={connection.provider} onChange={(event) => setConnection({ ...connection, provider: event.target.value })}>{Object.keys(providers).map((key) => <option key={key} value={key}>{providers[key]}</option>)}</select></label><label>Connection name<input required value={connection.name} onChange={(event) => setConnection({ ...connection, name: event.target.value })} /></label><label className="form-span">Provider secret<input required type="password" autoComplete="new-password" value={connection.secret} onChange={(event) => setConnection({ ...connection, secret: event.target.value })} /></label><button className="primary-button">Save connection</button></form></article>
+      <article className="admin-panel"><h2>New connection</h2><p>Add a provider credential to start receiving deployment events.</p><form onSubmit={submitConnection}><label>Provider<select value={connection.provider} onChange={(event) => setConnection({ ...connection, provider: event.target.value })}>{Object.keys(providers).map((key) => <option key={key} value={key}>{providers[key]}</option>)}</select></label><label>Connection name<input required value={connection.name} onChange={(event) => setConnection({ ...connection, name: event.target.value })} /></label><label className="form-span">Provider secret<input required type="password" autoComplete="new-password" value={connection.secret} onChange={(event) => setConnection({ ...connection, secret: event.target.value })} /></label><button className="primary-button">Save connection</button></form>{webhookBaseURL && workspaceID && <div className="webhook-url"><strong>Payload URL</strong><code>{webhookBaseURL}{connection.provider}/{encodeURIComponent(workspaceID)}</code><small>Set this URL and the same secret in your provider. GitHub: select the workflow_run event and application/json. A public HTTPS URL is required.</small></div>}</article>
       <article className="admin-panel"><h2>Connected providers</h2><p>Credentials currently available to this workspace.</p><div className="compact-list">{connections.length ? connections.map((item) => <div className="compact-item" key={item.id}><strong>{providers[item.provider] || item.provider}</strong><span>{item.name}</span></div>) : <span className="admin-empty">No provider connections yet.</span>}</div></article>
     </section>
   </>;
@@ -224,6 +224,7 @@ export default function DashboardPage() {
   const [health, setHealth] = useState(null);
   const [rules, setRules] = useState([]);
   const [connections, setConnections] = useState([]);
+  const [webhookSetup, setWebhookSetup] = useState({ baseURL: "", workspaceID: "" });
   const [deadLetters, setDeadLetters] = useState([]);
   const [filters, setFilters] = useState({ environment: "", status: "", q: "", days: 1 });
   const [error, setError] = useState("");
@@ -261,7 +262,7 @@ export default function DashboardPage() {
       api("/api/dead-letter-events").then((data) => setDeadLetters(data.items || [])),
     );
     if (location.pathname === "/app/connections") requests.push(
-      api("/api/provider-connections").then((data) => setConnections(data.items || [])),
+      api("/api/provider-connections").then((data) => { setConnections(data.items || []); setWebhookSetup({ baseURL: data.webhook_base_url || "", workspaceID: data.workspace_id || "" }); }),
     );
     const results = await Promise.allSettled(requests);
     const failedRequest = results.find((result) => result.status === "rejected");
@@ -293,7 +294,7 @@ export default function DashboardPage() {
       ? <DeploymentsPage busy={busy} deployments={deployments} filters={filters} nextCursor={nextCursor} openDetail={openDetail} onLoadMore={loadMore} setFilters={setFilters} />
       : location.pathname === "/app/alerts"
         ? <AlertsPage deadLetters={deadLetters} onReload={loadPage} onToast={setToast} rules={rules} />
-        : <ConnectionsPage connections={connections} onReload={loadPage} onToast={setToast} />;
+        : <ConnectionsPage connections={connections} onReload={loadPage} onToast={setToast} webhookBaseURL={webhookSetup.baseURL} workspaceID={webhookSetup.workspaceID} />;
 
   return <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
     <Sidebar collapsed={collapsed} health={health} onToggle={() => setCollapsed((value) => !value)} />
