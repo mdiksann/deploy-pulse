@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,7 @@ func NewServerWithConfig(service *Service, store *Store, publisher Publisher, co
 func (s *Server) Handler(_ ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/{provider}", s.handleWebhook)
+	mux.HandleFunc("POST /webhooks/{provider}/{workspace}", s.handleWebhook)
 	mux.HandleFunc("GET /healthz", s.live)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/health", s.health)
@@ -122,6 +124,9 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	database, queue := "healthy", "healthy"
 	if s.store.Healthy(r.Context()) != nil {
 		database = "unavailable"
@@ -129,12 +134,12 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if s.publisher == nil || s.publisher.Healthy(r.Context()) != nil {
 		queue = "unavailable"
 	}
-	dlq, err := s.store.DeadLetterCount(r.Context(), s.workspaceID())
+	dlq, err := s.store.DeadLetterCount(r.Context(), s.workspaceID(r))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "health unavailable")
 		return
 	}
-	connected, err := s.store.ConnectedProviders(r.Context(), s.workspaceID())
+	connected, err := s.store.ConnectedProviders(r.Context(), s.workspaceID(r))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "health unavailable")
 		return
@@ -162,6 +167,10 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	provider := strings.ToLower(r.PathValue("provider"))
+	workspaceID := r.PathValue("workspace")
+	if workspaceID == "" {
+		workspaceID = s.config.DefaultWorkspaceID
+	}
 	if !supportedProviders[provider] {
 		writeError(w, http.StatusNotFound, "unsupported provider")
 		return
@@ -171,7 +180,22 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "payload exceeds 1 MiB")
 		return
 	}
-	if err := s.service.Verify(provider, r.Header, body); err != nil {
+	encrypted, lookupErr := s.store.ConnectionSecret(r.Context(), workspaceID, provider)
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		writeError(w, http.StatusServiceUnavailable, "webhook configuration unavailable")
+		return
+	}
+	secret := ""
+	if lookupErr == nil {
+		secret, err = s.service.DecryptSecret(encrypted)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "webhook configuration unavailable")
+			return
+		}
+	} else if workspaceID == s.config.DefaultWorkspaceID {
+		secret = s.service.config.WebhookSecrets[provider]
+	}
+	if err := s.service.VerifyWithSecret(provider, secret, r.Header, body); err != nil {
 		if strings.Contains(err.Error(), "not configured") {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -179,7 +203,14 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
 	}
+	if provider == "github" && r.Header.Get("X-GitHub-Event") == "ping" {
+		writeJSON(w, http.StatusOK, map[string]bool{"accepted": true})
+		return
+	}
 	providerEventID := ProviderEventID(provider, body)
+	if provider == "github" && r.Header.Get("X-GitHub-Delivery") != "" {
+		providerEventID = r.Header.Get("X-GitHub-Delivery")
+	}
 	hash := sha256.Sum256(body)
 	if providerEventID == "" {
 		providerEventID = "payload-" + hex.EncodeToString(hash[:12])
@@ -188,7 +219,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if correlationID == "" {
 		correlationID = uuid.NewString()
 	}
-	event := WebhookEvent{ID: uuid.NewString(), WorkspaceID: s.workspaceID(), Provider: provider, ProviderEventID: providerEventID, Payload: body, PayloadHash: hex.EncodeToString(hash[:]), CorrelationID: correlationID, ReceivedAt: time.Now().UTC()}
+	event := WebhookEvent{ID: uuid.NewString(), WorkspaceID: workspaceID, Provider: provider, ProviderEventID: providerEventID, Payload: body, PayloadHash: hex.EncodeToString(hash[:]), CorrelationID: correlationID, ReceivedAt: time.Now().UTC()}
 	w.Header().Set("X-Correlation-ID", correlationID)
 	inserted, err := s.store.RecordWebhook(r.Context(), event)
 	if err != nil {
@@ -206,6 +237,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	f := ListFilter{Repository: q.Get("repository"), Branch: q.Get("branch"), Environment: q.Get("environment"), Provider: q.Get("provider"), Status: q.Get("status"), Actor: q.Get("actor"), Query: q.Get("q"), Cursor: q.Get("cursor"), Limit: limit}
@@ -215,7 +249,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if value := q.Get("end"); value != "" {
 		f.End, _ = time.Parse(time.RFC3339, value)
 	}
-	items, next, err := s.store.ListDeployments(r.Context(), s.workspaceID(), f)
+	items, next, err := s.store.ListDeployments(r.Context(), s.workspaceID(r), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load deployments")
 		return
@@ -224,11 +258,14 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) analytics(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
 	if err != nil {
 		days = 7
 	}
-	data, err := s.store.DeploymentAnalyticsFiltered(r.Context(), s.workspaceID(), days, r.URL.Query().Get("environment"))
+	data, err := s.store.DeploymentAnalyticsFiltered(r.Context(), s.workspaceID(r), days, r.URL.Query().Get("environment"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load deployment analytics")
 		return
@@ -284,7 +321,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create account")
 		return
 	}
-	_, _, err = s.store.CreatePendingUser(r.Context(), email, hash, s.workspaceID())
+	_, _, err = s.store.CreatePendingUser(r.Context(), email, hash, uuid.NewString())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create account")
 		return
@@ -314,7 +351,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
-	detail, err := s.store.Deployment(r.Context(), s.workspaceID(), r.PathValue("id"))
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	detail, err := s.store.Deployment(r.Context(), s.workspaceID(r), r.PathValue("id"))
 	if errors.Is(err, io.EOF) || strings.Contains(errString(err), "no rows") {
 		writeError(w, http.StatusNotFound, "deployment not found")
 		return
@@ -337,7 +377,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
-	rules, err := s.store.ListRules(r.Context(), s.workspaceID())
+	rules, err := s.store.ListRules(r.Context(), s.workspaceID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load rules")
 		return
@@ -369,7 +409,7 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repository, environment, failed status, channel, and target are required")
 		return
 	}
-	rule, err := s.store.CreateRule(r.Context(), NotificationRule{WorkspaceID: s.workspaceID(), Repository: input.Repository, Environment: input.Environment, Status: input.Status, Channel: input.Channel, Target: input.Target})
+	rule, err := s.store.CreateRule(r.Context(), NotificationRule{WorkspaceID: s.workspaceID(r), Repository: input.Repository, Environment: input.Environment, Status: input.Status, Channel: input.Channel, Target: input.Target})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create rule")
 		return
@@ -381,7 +421,7 @@ func (s *Server) listDeadLetters(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
-	items, err := s.store.ListDeadLetters(r.Context(), s.workspaceID())
+	items, err := s.store.ListDeadLetters(r.Context(), s.workspaceID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load dead-letter events")
 		return
@@ -394,7 +434,7 @@ func (s *Server) reprocessDeadLetter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dlqID := r.PathValue("id")
-	eventID, err := s.store.PrepareReprocess(r.Context(), s.workspaceID(), dlqID)
+	eventID, err := s.store.PrepareReprocess(r.Context(), s.workspaceID(r), dlqID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "dead-letter event not found")
 		return
@@ -414,12 +454,12 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeAdmin(w, r, false) {
 		return
 	}
-	items, err := s.store.ListConnections(r.Context(), s.workspaceID())
+	items, err := s.store.ListConnections(r.Context(), s.workspaceID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load provider connections")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "supported_providers": SortedProviders()})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "supported_providers": SortedProviders(), "webhook_base_url": strings.TrimRight(s.config.APIPublicURL, "/") + "/webhooks/", "workspace_id": s.workspaceID(r)})
 }
 
 func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +484,7 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not encrypt secret")
 		return
 	}
-	connection, err := s.store.SaveConnection(r.Context(), s.workspaceID(), input.Provider, input.Name, encrypted)
+	connection, err := s.store.SaveConnection(r.Context(), s.workspaceID(r), input.Provider, input.Name, encrypted)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save provider connection")
 		return
@@ -463,7 +503,13 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	return true
 }
 
-func (s *Server) workspaceID() string { return s.config.DefaultWorkspaceID }
+func (s *Server) workspaceID(r *http.Request) string {
+	user, ok := s.authenticateSession(r)
+	if !ok {
+		return ""
+	}
+	return user.WorkspaceID
+}
 
 func (s *Server) isAdmin(r *http.Request) bool {
 	_, ok := s.authenticateSession(r)
