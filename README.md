@@ -27,7 +27,7 @@ For SQLite-only parser and API tests, use `go test ./...`. The production API an
 
 ## Webhooks
 
-Configure only the provider secrets you use. Each endpoint is `POST /webhooks/{provider}` and rejects a missing or invalid provider-specific signature before persistence.
+Configure only the provider secrets you use. For each account, save the provider secret in **Connections** and use the displayed `POST /webhooks/{provider}/{workspace_id}` URL in the provider's webhook settings. The legacy `POST /webhooks/{provider}` endpoint uses `DEFAULT_WORKSPACE_ID` and its environment secret. Both endpoints reject a missing or invalid provider-specific signature before persistence.
 
 | Provider | Environment variable | Verification |
 | --- | --- | --- |
@@ -38,17 +38,19 @@ Configure only the provider secrets you use. Each endpoint is `POST /webhooks/{p
 | Netlify | `WEBHOOK_SECRET_NETLIFY` | `X-Webhook-Signature` HS256 JWS |
 | AWS CodePipeline | `AWS_RELAY_SECRET` | internal `X-DeployPulse-Relay-Signature`, HMAC-SHA256 |
 
+For GitHub Actions, open the repository's **Settings → Webhooks → Add webhook**. Paste the workspace Payload URL shown in Connections, select `application/json`, enter the same secret, and select the **Workflow runs** event. GitHub sends an initial `ping`, which the API acknowledges without creating a deployment. The GitHub repository URL itself is not the webhook destination.
+
 Webhook writes are idempotent by `(workspace_id, provider, provider_event_id)`. Redis is at-least-once: the worker calls `XACK` only after the database transaction for the deployment and webhook status commits. Pending deliveries are reclaimed by `XAUTOCLAIM`; after five attempts, the worker writes both the Redis DLQ stream and the database DLQ.
 
-`DEFAULT_WORKSPACE_ID` scopes this release to one workspace. Request-provided workspace headers are intentionally ignored.
+The workspace in a webhook URL is a routing key, not authorization: the provider-specific HMAC secret must match the encrypted secret saved for that workspace. Request-provided workspace headers are ignored. `DEFAULT_WORKSPACE_ID` is retained for the legacy endpoint.
 
 ## Administration and authentication
 
-Create an account at the frontend `/signup`, then sign in immediately. Every account is an `admin` in `DEFAULT_WORKSPACE_ID`. Email verification and SMTP are not required. Sessions are database-backed, last eight hours, and are sent only as an HttpOnly, SameSite cookie. Use `/login`, `GET /api/auth/me`, and `POST /api/auth/logout` for the session flow.
+Create an account at the frontend `/signup`, then sign in immediately. Each new account gets its own workspace and is its admin. Existing accounts created before this change keep their stored workspace IDs and must be reassigned separately if they shared one. Email verification and SMTP are not required. Sessions are database-backed, last eight hours, and are sent only as an HttpOnly, SameSite cookie. Use `/login`, `GET /api/auth/me`, and `POST /api/auth/logout` for the session flow.
 
 `ADMIN_API_TOKEN` and Bearer authentication were removed as a breaking change. Provider connections, notification rules, and DLQ operations require a verified session cookie. Browser mutations require an `Origin` included in `FRONTEND_ORIGINS`.
 
-Provider secrets saved through the API are encrypted with `ENCRYPTION_KEY`; the API never returns them. `ENCRYPTION_KEY` is mandatory whenever `APP_ENV=production`.
+Provider secrets saved through the API are encrypted with `ENCRYPTION_KEY`; the API never returns them. They are used to verify webhooks for that workspace. `ENCRYPTION_KEY` is mandatory whenever `APP_ENV=production`. Deployment, analytics, health detail, and administration API endpoints require a session and use the session's workspace.
 
 Frontend/backend deployments use separate origins. Set `FRONTEND_ORIGINS` to the exact comma-separated frontend origins and `API_PUBLIC_URL` for the browser API base URL. The production default is `https://app.example.com` for the frontend and `https://api.example.com` for the API.
 
