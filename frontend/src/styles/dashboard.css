@@ -216,6 +216,9 @@ tbody tr:hover { background: rgba(18, 36, 66, 0.45); }
 .admin-panel form label { display: grid; gap: 6px; color: var(--dim); font-size: 11px; font-family: var(--mono); }
 .admin-panel input, .admin-panel select { width: 100%; min-height: 42px; padding: 0 12px; color: var(--text); background: rgba(4, 9, 18, 0.8); border: 1px solid var(--line); border-radius: 8px; }
 .admin-panel .form-span { grid-column: 1 / -1; }
+.webhook-url { display: grid; gap: 8px; margin-top: 20px; color: var(--dim); font-size: 12px; }
+.webhook-url code { padding: 10px 12px; overflow-wrap: anywhere; color: var(--text); background: rgba(4, 9, 18, 0.8); border: 1px solid var(--line); border-radius: 8px; }
+.webhook-url small { line-height: 1.5; color: var(--muted); }
 .connections-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, .72fr); }
 .primary-button { min-height: 42px; padding: 0 18px; align-self: end; color: #020814; background: linear-gradient(135deg, #7dd3fc, #38bdf8); border: none; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 0 16px rgba(56, 189, 248, 0.35); transition: all .16s ease; }
 .primary-button:hover { box-shadow: 0 0 24px rgba(56, 189, 248, 0.6); transform: translateY(-1px); }
