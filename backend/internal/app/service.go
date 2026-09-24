@@ -62,7 +62,10 @@ func (s *Service) ConfiguredProviders() []string {
 }
 
 func (s *Service) Verify(provider string, header http.Header, body []byte) error {
-	secret := s.config.WebhookSecrets[provider]
+	return s.VerifyWithSecret(provider, s.config.WebhookSecrets[provider], header, body)
+}
+
+func (s *Service) VerifyWithSecret(provider, secret string, header http.Header, body []byte) error {
 	if secret == "" {
 		return fmt.Errorf("provider %q is not configured", provider)
 	}
@@ -106,6 +109,31 @@ func (s *Service) EncryptSecret(secret string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(append(nonce, gcm.Seal(nil, nonce, []byte(secret), nil)...)), nil
+}
+
+func (s *Service) DecryptSecret(encrypted string) (string, error) {
+	keyMaterial := s.config.EncryptionKey
+	if keyMaterial == "" {
+		if s.config.Production {
+			return "", errors.New("ENCRYPTION_KEY is required in production")
+		}
+		keyMaterial = "deploy-pulse-development-key"
+	}
+	key := sha256.Sum256([]byte(keyMaterial))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	data, err := hex.DecodeString(encrypted)
+	if err != nil || len(data) < gcm.NonceSize() {
+		return "", errors.New("invalid encrypted provider secret")
+	}
+	plain, err := gcm.Open(nil, data[:gcm.NonceSize()], data[gcm.NonceSize():], nil)
+	return string(plain), err
 }
 
 // Process only returns after the deployment and webhook state commit. The queue ACKs after this call.
