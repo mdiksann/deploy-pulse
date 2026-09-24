@@ -711,6 +711,12 @@ func (s *Store) SaveConnection(ctx context.Context, workspaceID, provider, name,
 	return item, err
 }
 
+func (s *Store) ConnectionSecret(ctx context.Context, workspaceID, provider string) (string, error) {
+	var encrypted string
+	err := s.queryRow(ctx, `SELECT secret_encrypted FROM provider_connections WHERE workspace_id=? AND provider=?`, workspaceID, provider).Scan(&encrypted)
+	return encrypted, err
+}
+
 func encodeCursor(t time.Time, id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(t.UTC().Format(time.RFC3339Nano) + "|" + id))
 }
