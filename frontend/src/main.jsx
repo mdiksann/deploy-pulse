@@ -108,8 +108,9 @@ function SignupPage() {
 }
 
 function Guard({ children }) {
-  const { user, loading } = useAuth();
+  const { user, loading, authError, checkSession } = useAuth();
   if (loading) return <main className="auth-shell"><div className="auth-card">Loading session…</div></main>;
+  if (authError && !user) return <main className="auth-shell"><div className="auth-card" role="alert"><p>{authError}</p><button className="primary-button auth-submit" onClick={checkSession}>Try again</button></div></main>;
   return user ? children : <Navigate to="/login" replace />;
 }
 

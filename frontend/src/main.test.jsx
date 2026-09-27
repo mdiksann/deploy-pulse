@@ -14,6 +14,17 @@ beforeEach(() => {
 });
 
 describe("authentication flow", () => {
+  it("keeps the app route when session lookup is temporarily unavailable", async () => {
+    window.history.pushState({}, "", "/app");
+    fetch.mockImplementationOnce(async () => response(503, { error: "session temporarily unavailable" }));
+    render(<App/>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("session temporarily unavailable");
+    expect(window.location.pathname).toBe("/app");
+    fetch.mockImplementation(async (path) => response(200, path === "/api/auth/me" ? { user: { email: "ops@example.com" } } : {}));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: /release activity is stable/i })).toBeInTheDocument();
+  });
+
   it("uses separate app routes and toggles the sidebar rail", async () => {
     window.history.pushState({}, "", "/app");
     fetch.mockImplementation(async (path) => response(200, path === "/api/auth/me"
