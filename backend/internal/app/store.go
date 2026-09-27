@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +29,10 @@ func OpenStore(ctx context.Context, databaseURL string) (*Store, error) {
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
+	}
+	if postgres && os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 	store := &Store{db: db, postgres: postgres}
 	if err := store.db.PingContext(ctx); err != nil {
@@ -300,6 +305,12 @@ func (s *Store) RecordWebhook(ctx context.Context, event WebhookEvent) (bool, er
 	}
 	n, err := result.RowsAffected()
 	return n == 1, err
+}
+
+func (s *Store) WebhookQueueState(ctx context.Context, workspaceID, provider, providerEventID string) (string, string, error) {
+	var id, status string
+	err := s.queryRow(ctx, `SELECT id,status FROM webhook_events WHERE workspace_id=? AND provider=? AND provider_event_id=?`, workspaceID, provider, providerEventID).Scan(&id, &status)
+	return id, status, err
 }
 
 func (s *Store) Webhook(ctx context.Context, id string) (WebhookEvent, error) {
