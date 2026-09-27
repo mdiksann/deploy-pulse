@@ -62,6 +62,42 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	}
 }
 
+func TestWebhookRetryPublishesQueuedDuplicate(t *testing.T) {
+	store := testStore(t)
+	defer store.Close()
+	service := NewService(store, Config{WebhookSecrets: map[string]string{"github": "test-secret"}})
+	publisher := &failOncePublisher{service: service}
+	handler := NewServerWithConfig(service, store, publisher, ServerConfig{DefaultWorkspaceID: "demo"}).Handler()
+	payload := mustReadFixture(t, "github.json")
+	for attempt, want := range []int{http.StatusServiceUnavailable, http.StatusAccepted} {
+		request := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
+		request.Header.Set("X-Hub-Signature-256", "sha256="+signature("test-secret", payload))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("attempt %d: status=%d body=%s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	items, _, err := store.ListDeployments(t.Context(), "demo", ListFilter{})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("deployments=%d err=%v", len(items), err)
+	}
+}
+
+type failOncePublisher struct {
+	service *Service
+	calls   int
+}
+
+func (p *failOncePublisher) Publish(ctx context.Context, eventID string) error {
+	p.calls++
+	if p.calls == 1 {
+		return context.DeadlineExceeded
+	}
+	return p.service.Process(ctx, eventID)
+}
+func (*failOncePublisher) Healthy(context.Context) error { return nil }
+
 func TestGitHubWorkflowDeliveriesUseDeliveryID(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
