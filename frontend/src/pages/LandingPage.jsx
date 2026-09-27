@@ -105,14 +105,6 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section className="status-strip" aria-label="System status">
-          <span>system.active</span>
-          <span>ingestion.active</span>
-          <span className="status-spacer" />
-          <span className="status-live"><i /> monitoring</span>
-          <span>events: live</span>
-        </section>
-
         <section className="landing-section feature-section" id="features" aria-labelledby="features-title">
           <div className="section-heading">
             <div>

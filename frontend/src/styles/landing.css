@@ -101,7 +101,6 @@
 .header-meta,
 .landing-nav,
 .section-code,
-.status-strip,
 .footer-bottom {
   font-family: var(--landing-mono);
 }
@@ -224,38 +223,6 @@
 .outline-button:not(.button-primary):hover {
   background: #fff;
   color: #050505;
-}
-
-.status-strip {
-  align-items: center;
-  color: var(--landing-dim);
-  display: flex;
-  font-size: 9px;
-  gap: 14px;
-  letter-spacing: .04em;
-  min-height: 34px;
-  padding: 0 clamp(20px, 5.5vw, 56px);
-  position: relative;
-  text-transform: uppercase;
-  z-index: 1;
-}
-
-.status-spacer {
-  flex: 1;
-}
-
-.status-live {
-  color: #bdbdbd;
-}
-
-.status-live i {
-  background: #cfcfcf;
-  border-radius: 50%;
-  display: inline-block;
-  height: 4px;
-  margin-right: 6px;
-  vertical-align: 1px;
-  width: 4px;
 }
 
 .landing-section,
@@ -526,17 +493,6 @@
     margin-left: auto;
     margin-right: auto;
     max-width: 250px;
-  }
-
-  .status-strip {
-    flex-wrap: wrap;
-    gap: 9px;
-    padding-bottom: 9px;
-    padding-top: 9px;
-  }
-
-  .status-spacer {
-    display: none;
   }
 
   .section-heading,

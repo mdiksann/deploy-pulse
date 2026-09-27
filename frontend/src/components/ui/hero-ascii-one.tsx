@@ -84,20 +84,6 @@ export default function AnimationPage({
         </div>
       </div>
 
-      <div className="absolute bottom-[5vh] left-0 right-0 z-20">
-        <div className="container mx-auto flex items-center justify-between px-4 py-2 lg:px-8 lg:py-3">
-          <div className="flex items-center gap-3 font-mono text-[8px] text-white/50 lg:gap-6 lg:text-[9px]">
-            <span className="hidden lg:inline">SYSTEM.ACTIVE</span>
-            <span className="lg:hidden">SYS.ACT</span>
-            <span>INGESTION.ACTIVE</span>
-          </div>
-
-          <div className="flex items-center gap-2 font-mono text-[8px] text-white/50 lg:gap-4 lg:text-[9px]">
-            <span className="hidden lg:inline">◐ MONITORING</span>
-            <span className="hidden lg:inline">EVENTS: LIVE</span>
-          </div>
-        </div>
-      </div>
     </main>
   );
 }
