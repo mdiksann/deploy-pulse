@@ -1,6 +1,6 @@
 # Deploy Pulse
 
-Deploy Pulse ingests signed deployment webhooks, stores the raw event durably, then processes it through Redis Streams into a sanitized deployment timeline. PostgreSQL is the production store; SQLite is retained for local development and tests.
+Deploy Pulse ingests signed deployment webhooks, stores the raw event durably, then processes it through a queue into a sanitized deployment timeline. PostgreSQL is the production store; SQLite is retained for local development and tests. Local Compose uses Redis Streams, while the AWS Lambda deployment uses SQS.
 
 ## Services and local development run
 
@@ -23,7 +23,7 @@ The runtime roles are separate:
 - `deploypulse worker` consumes `deploypulse:events` with consumer group `deploypulse-workers`.
 - `deploypulse migrate` applies entries in `schema_migrations` and can be rerun safely.
 
-For SQLite-only parser and API tests, use `go test ./...`. The production API and worker require `REDIS_URL`; use Compose for an end-to-end local runtime.
+For SQLite-only parser and API tests, use `go test ./...`. The Compose API and worker require `REDIS_URL`; use Compose for an end-to-end local runtime.
 
 ## Webhooks
 
@@ -52,7 +52,7 @@ Create an account at the frontend `/signup`, then sign in immediately. Each new 
 
 Provider secrets saved through the API are encrypted with `ENCRYPTION_KEY`; the API never returns them. They are used to verify webhooks for that workspace. `ENCRYPTION_KEY` is mandatory whenever `APP_ENV=production`. Deployment, analytics, health detail, and administration API endpoints require a session and use the session's workspace.
 
-Frontend/backend deployments use separate origins. Set `FRONTEND_ORIGINS` to the exact comma-separated frontend origins and `API_PUBLIC_URL` for the browser API base URL. The production default is `https://app.example.com` for the frontend and `https://api.example.com` for the API.
+Set `FRONTEND_ORIGINS` to the exact frontend origin and `API_PUBLIC_URL` to the public webhook base origin. The Vercel setup below forwards API requests through the frontend origin so session cookies work in the browser.
 
 ## Operate
 
@@ -96,7 +96,15 @@ cd ..
 docker compose config
 ```
 
-The Vite client reads `VITE_API_BASE_URL` when set; otherwise the dev server proxies requests to `http://localhost:8080`. For a separate production deployment, build the frontend with `VITE_API_BASE_URL=https://api.example.com` and configure the API allowlist with `FRONTEND_ORIGINS=https://app.example.com`.
+The Vite client reads `VITE_API_BASE_URL` when set; otherwise the dev server proxies requests to `http://localhost:8080`.
+
+## AWS Lambda and Vercel
+
+The production backend can use `infra/aws/deploypulse-lambda/template.yaml`: one Lambda serves the HTTP API through a Function URL, another consumes signed webhook events from SQS, and both connect to the PostgreSQL database specified by `DATABASE_URL`. The worker also runs retention cleanup daily. Check `/healthz` and `/readyz` at the deployed Function URL. The Function URL is public; application endpoints still enforce their own session or webhook signature checks.
+
+To publish the frontend, create a Vercel project from this repository with **Root Directory** `frontend` and framework **Vite**. Keep `VITE_API_BASE_URL` unset so requests use the same origin. `frontend/vercel.json` proxies `/api/*` and `/webhooks/*` to the Lambda Function URL and serves `index.html` for app routes. Update the rewrite destination if your Function URL differs. Set the CloudFormation `FrontendOrigin` parameter to the exact Vercel origin and `ApiPublicURL` to the public Function URL. Do not put `DATABASE_URL` or `ENCRYPTION_KEY` in Vercel; only the backend needs them.
+
+The stack is managed with `aws cloudformation deploy`. Its parameter file includes secrets and must remain local with mode 600. Configure `DATABASE_URL` for your PostgreSQL provider using TLS and a connection method suitable for Lambda. Keep the same `ENCRYPTION_KEY` when reusing an existing database, or saved provider secrets cannot be decrypted. The Connections secret for each workspace remains the HMAC secret for GitHub Actions, and the GitHub workflow must send events to the displayed workspace webhook URL.
 
 Run the included local load check after Compose is healthy:
 
