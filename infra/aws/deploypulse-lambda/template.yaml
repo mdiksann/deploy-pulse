@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Deploy Pulse API and SQS worker on Lambda, backed by Supabase PostgreSQL.
+
+Parameters:
+  ApiImageUri:
+    Type: String
+  WorkerImageUri:
+    Type: String
+  DatabaseURL:
+    Type: String
+    NoEcho: true
+  EncryptionKey:
+    Type: String
+    NoEcho: true
+  FrontendOrigin:
+    Type: String
+    Description: HTTPS Vercel origin that proxies /api and /webhooks to the function URL.
+  ApiPublicURL:
+    Type: String
+    Description: Public HTTPS URL displayed for provider webhooks.
+
+Resources:
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageUri: !Ref ApiImageUri
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 25
+      FunctionUrlConfig:
+        AuthType: NONE
+      Environment:
+        Variables:
+          APP_ENV: production
+          DATABASE_URL: !Ref DatabaseURL
+          ENCRYPTION_KEY: !Ref EncryptionKey
+          FRONTEND_ORIGINS: !Ref FrontendOrigin
+          API_PUBLIC_URL: !Ref ApiPublicURL
+          SQS_QUEUE_URL: !Ref EventQueue
+          DEMO_DATA: 'false'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [sqs:SendMessage, sqs:GetQueueAttributes]
+              Resource: !GetAtt EventQueue.Arn
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageUri: !Ref WorkerImageUri
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 20
+      Environment:
+        Variables:
+          APP_ENV: production
+          DATABASE_URL: !Ref DatabaseURL
+          ENCRYPTION_KEY: !Ref EncryptionKey
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+              Resource: !GetAtt EventQueue.Arn
+      Events:
+        Deployments:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes: [ReportBatchItemFailures]
+        Retention:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 day)
+
+Outputs:
+  ApiURL:
+    Description: Public HTTPS function URL for Vercel rewrites.
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  QueueURL:
+    Value: !Ref EventQueue
+  DeadLetterQueueURL:
+    Value: !Ref DeadLetterQueue
