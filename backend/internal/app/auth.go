@@ -3,8 +3,10 @@ package app
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -67,19 +69,23 @@ func newSessionToken() (string, string, error) {
 
 func publicUser(user User) User { return user }
 
-func (s *Server) authenticateSession(r *http.Request) (User, bool) {
+func (s *Server) authenticateSession(r *http.Request) (User, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
-		return User{}, false
+		return User{}, sql.ErrNoRows
 	}
-	user, err := s.store.SessionUser(r.Context(), hashToken(cookie.Value), time.Now().UTC())
-	return user, err == nil
+	return s.store.SessionUser(r.Context(), hashToken(cookie.Value), time.Now().UTC())
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (User, bool) {
-	user, ok := s.authenticateSession(r)
-	if !ok {
+	user, err := s.authenticateSession(r)
+	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
+		return User{}, false
+	}
+	if err != nil {
+		log.Printf("session lookup failed: %v", err)
+		writeError(w, http.StatusServiceUnavailable, "session temporarily unavailable")
 		return User{}, false
 	}
 	return user, true

@@ -226,7 +226,7 @@ export default function DashboardPage() {
   const [connections, setConnections] = useState([]);
   const [webhookSetup, setWebhookSetup] = useState({ baseURL: "", workspaceID: "" });
   const [deadLetters, setDeadLetters] = useState([]);
-  const [filters, setFilters] = useState({ environment: "", status: "", q: "", days: 1 });
+  const [filters, setFilters] = useState({ environment: "", status: "", q: "", days: 30 });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);

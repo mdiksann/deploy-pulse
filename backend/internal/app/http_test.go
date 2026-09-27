@@ -40,6 +40,7 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	}
 	valid := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
 	valid.Header.Set("Content-Type", "application/json")
+	valid.Header.Set("X-GitHub-Event", "workflow_run")
 	valid.Header.Set("X-Hub-Signature-256", "sha256="+signature("test-secret", payload))
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, valid)
@@ -62,6 +63,44 @@ func TestWebhookRejectsInvalidSignatureAndProcessesValidDelivery(t *testing.T) {
 	}
 }
 
+func TestGitHubNonWorkflowEventIsIgnored(t *testing.T) {
+	store := testStore(t)
+	defer store.Close()
+	service := NewService(store, Config{WebhookSecrets: map[string]string{"github": "test-secret"}})
+	handler := NewServerWithConfig(service, store, processingPublisher{service}, ServerConfig{DefaultWorkspaceID: "demo"}).Handler()
+	payload := []byte(`{"action":"deleted","repository":{"full_name":"example/app"}}`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
+	request.Header.Set("X-GitHub-Event", "meta")
+	request.Header.Set("X-Hub-Signature-256", "sha256="+signature("test-secret", payload))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("meta event status=%d body=%s", response.Code, response.Body.String())
+	}
+	var events int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM webhook_events`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Fatalf("meta event persisted %d events", events)
+	}
+}
+
+func TestSessionDatabaseFailureIsNotUnauthorized(t *testing.T) {
+	store := testStore(t)
+	handler := NewServerWithConfig(NewService(store, Config{}), store, nil, ServerConfig{}).Handler()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("database failure status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebhookRetryPublishesQueuedDuplicate(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
@@ -71,6 +110,7 @@ func TestWebhookRetryPublishesQueuedDuplicate(t *testing.T) {
 	payload := mustReadFixture(t, "github.json")
 	for attempt, want := range []int{http.StatusServiceUnavailable, http.StatusAccepted} {
 		request := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
+		request.Header.Set("X-GitHub-Event", "workflow_run")
 		request.Header.Set("X-Hub-Signature-256", "sha256="+signature("test-secret", payload))
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -229,6 +269,7 @@ func TestWorkspaceWebhookUsesStoredSecret(t *testing.T) {
 	payload := []byte(`{"repository":{"full_name":"example/app"},"workflow_run":{"id":123,"status":"completed","conclusion":"success"}}`)
 	send := func(workspace, secret string) int {
 		request := httptest.NewRequest(http.MethodPost, "/webhooks/github/"+workspace, bytes.NewReader(payload))
+		request.Header.Set("X-GitHub-Event", "workflow_run")
 		request.Header.Set("X-Hub-Signature-256", "sha256="+signature(secret, payload))
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)

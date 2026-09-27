@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -124,7 +125,8 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
+	user, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
 	database, queue := "healthy", "healthy"
@@ -134,13 +136,15 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if s.publisher == nil || s.publisher.Healthy(r.Context()) != nil {
 		queue = "unavailable"
 	}
-	dlq, err := s.store.DeadLetterCount(r.Context(), s.workspaceID(r))
+	dlq, err := s.store.DeadLetterCount(r.Context(), user.WorkspaceID)
 	if err != nil {
+		log.Printf("health dead-letter lookup failed: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "health unavailable")
 		return
 	}
-	connected, err := s.store.ConnectedProviders(r.Context(), s.workspaceID(r))
+	connected, err := s.store.ConnectedProviders(r.Context(), user.WorkspaceID)
 	if err != nil {
+		log.Printf("health provider lookup failed: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "health unavailable")
 		return
 	}
@@ -203,8 +207,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
 	}
-	if provider == "github" && r.Header.Get("X-GitHub-Event") == "ping" {
-		writeJSON(w, http.StatusOK, map[string]bool{"accepted": true})
+	if provider == "github" && r.Header.Get("X-GitHub-Event") != "workflow_run" {
+		writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "ignored": true})
 		return
 	}
 	providerEventID := ProviderEventID(provider, body)
@@ -248,7 +252,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
+	user, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -260,25 +265,28 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if value := q.Get("end"); value != "" {
 		f.End, _ = time.Parse(time.RFC3339, value)
 	}
-	items, next, err := s.store.ListDeployments(r.Context(), s.workspaceID(r), f)
+	items, next, err := s.store.ListDeployments(r.Context(), user.WorkspaceID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load deployments")
+		log.Printf("deployment list failed: %v", err)
+		writeError(w, http.StatusServiceUnavailable, "could not load deployments")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
 }
 
 func (s *Server) analytics(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
+	user, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
 	if err != nil {
 		days = 7
 	}
-	data, err := s.store.DeploymentAnalyticsFiltered(r.Context(), s.workspaceID(r), days, r.URL.Query().Get("environment"))
+	data, err := s.store.DeploymentAnalyticsFiltered(r.Context(), user.WorkspaceID, days, r.URL.Query().Get("environment"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load deployment analytics")
+		log.Printf("deployment analytics failed: %v", err)
+		writeError(w, http.StatusServiceUnavailable, "could not load deployment analytics")
 		return
 	}
 	writeJSON(w, http.StatusOK, data)
@@ -341,9 +349,8 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.authenticateSession(r)
+	user, ok := s.requireSession(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "admin authentication required")
 		return
 	}
 	writeJSON(w, http.StatusOK, userResponse(user))
@@ -362,10 +369,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
+	user, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	detail, err := s.store.Deployment(r.Context(), s.workspaceID(r), r.PathValue("id"))
+	detail, err := s.store.Deployment(r.Context(), user.WorkspaceID, r.PathValue("id"))
 	if errors.Is(err, io.EOF) || strings.Contains(errString(err), "no rows") {
 		writeError(w, http.StatusNotFound, "deployment not found")
 		return
@@ -515,21 +523,20 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 }
 
 func (s *Server) workspaceID(r *http.Request) string {
-	user, ok := s.authenticateSession(r)
-	if !ok {
+	user, err := s.authenticateSession(r)
+	if err != nil {
 		return ""
 	}
 	return user.WorkspaceID
 }
 
 func (s *Server) isAdmin(r *http.Request) bool {
-	_, ok := s.authenticateSession(r)
-	return ok
+	_, err := s.authenticateSession(r)
+	return err == nil
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request, mutate bool) bool {
-	if !s.isAdmin(r) {
-		writeError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.requireSession(w, r); !ok {
 		return false
 	}
 	if mutate {
