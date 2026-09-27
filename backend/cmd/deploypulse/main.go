@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"deploypulse/internal/app"
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
 )
 
 func main() {
@@ -18,8 +20,8 @@ func main() {
 	if len(os.Args) > 1 {
 		role = os.Args[1]
 	}
-	if role != "api" && role != "worker" && role != "migrate" {
-		log.Fatalf("unknown role %q (use api, worker, or migrate)", role)
+	if role != "api" && role != "worker" && role != "migrate" && role != "lambda-worker" {
+		log.Fatalf("unknown role %q (use api, worker, migrate, or lambda-worker)", role)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -44,17 +46,37 @@ func main() {
 	if err := service.ValidateConfig(); err != nil {
 		log.Fatal(err)
 	}
-	frontendOrigins := env("FRONTEND_ORIGINS", "http://localhost:3000")
-	queue, err := app.OpenRedisStream(os.Getenv("REDIS_URL"))
-	if err != nil {
-		log.Fatal("REDIS_URL is required for api and worker: ", err)
+	if role == "lambda-worker" {
+		lambda.Start(func(ctx context.Context, batch events.SQSEvent) (events.SQSEventResponse, error) {
+			return app.ProcessSQSBatch(ctx, store, service, batch)
+		})
+		return
 	}
-	defer queue.Close()
+	frontendOrigins := env("FRONTEND_ORIGINS", "http://localhost:3000")
 	if role == "worker" {
+		queue, err := app.OpenRedisStream(os.Getenv("REDIS_URL"))
+		if err != nil {
+			log.Fatal("REDIS_URL is required for worker: ", err)
+		}
+		defer queue.Close()
 		if err := app.NewWorker(service, store, queue).Run(ctx); err != nil && err != context.Canceled {
 			log.Fatal(err)
 		}
 		return
+	}
+	var publisher app.Publisher
+	if url := os.Getenv("SQS_QUEUE_URL"); url != "" {
+		publisher, err = app.OpenSQSQueue(ctx, url)
+	} else {
+		var queue *app.RedisStream
+		queue, err = app.OpenRedisStream(os.Getenv("REDIS_URL"))
+		if err == nil {
+			defer queue.Close()
+			publisher = queue
+		}
+	}
+	if err != nil {
+		log.Fatal("queue configuration: ", err)
 	}
 	if env("DEMO_DATA", "false") == "true" {
 		if err := service.SeedDemo(ctx, env("DEFAULT_WORKSPACE_ID", "demo")); err != nil {
@@ -63,7 +85,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              env("ADDR", ":8080"),
-		Handler:           app.NewServerWithConfig(service, store, queue, app.ServerConfig{DefaultWorkspaceID: env("DEFAULT_WORKSPACE_ID", "demo"), Production: production, FrontendOrigins: splitNonEmpty(frontendOrigins), APIPublicURL: env("API_PUBLIC_URL", "http://localhost:8080")}).Handler(),
+		Handler:           app.NewServerWithConfig(service, store, publisher, app.ServerConfig{DefaultWorkspaceID: env("DEFAULT_WORKSPACE_ID", "demo"), Production: production, FrontendOrigins: splitNonEmpty(frontendOrigins), APIPublicURL: env("API_PUBLIC_URL", "http://localhost:8080")}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
