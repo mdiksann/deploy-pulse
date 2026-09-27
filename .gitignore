@@ -1,4 +1,10 @@
 deploy-pulse.db
 deploy-pulse.db-*
 .env
+.env.*
+!.env.example
+!.env.compose.example
+*.dump
+/deploypulse-*.sql
+.vercel/
 /node_modules
