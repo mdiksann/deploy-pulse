@@ -226,12 +226,23 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not record webhook")
 		return
 	}
-	if inserted {
-		if s.publisher == nil || s.publisher.Publish(r.Context(), event.ID) != nil {
-			// The database record remains queued. Returning 503 asks the provider to retry its delivery.
-			writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+	publishID := event.ID
+	if !inserted {
+		var status string
+		publishID, status, err = s.store.WebhookQueueState(r.Context(), workspaceID, provider, providerEventID)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "webhook state unavailable")
 			return
 		}
+		if status != "queued" {
+			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "duplicate": true, "correlation_id": correlationID})
+			return
+		}
+	}
+	if s.publisher == nil || s.publisher.Publish(r.Context(), publishID) != nil {
+		// The database record remains queued. Returning 503 asks the provider to retry its delivery.
+		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "duplicate": !inserted, "correlation_id": correlationID})
 }
